@@ -1,40 +1,70 @@
+import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 const FLOATING_WINDOW = "floating-note";
 
-export async function openFloatingWindow() {
-	console.log("opening floating window");
+async function configureOverlayWindow(window: WebviewWindow) {
+	await invoke("configure_overlay_window", { label: window.label });
+}
+
+export async function closeFloatingWindow() {
 	const existing = await WebviewWindow.getByLabel(FLOATING_WINDOW);
 
 	if (existing) {
-		console.log("existing found, showing");
+		await existing.hide();
+	}
+	return null;
+}
+
+export async function openFloatingWindow() {
+	const existing = await WebviewWindow.getByLabel(FLOATING_WINDOW);
+
+	if (existing) {
 		await existing.setAlwaysOnTop(true);
+		await existing.setVisibleOnAllWorkspaces(true);
+		await configureOverlayWindow(existing);
 		await existing.show();
 		await existing.setFocus();
 		return existing;
 	}
 
-	console.log("creating new window");
 	const newWindow = new WebviewWindow(FLOATING_WINDOW, {
-		url: "/",
+		url: "/floating-note",
 		title: "Quick Note",
 		width: 600,
 		height: 500,
+		x: 100,
+		y: 100,
 		alwaysOnTop: true,
-		focus: true,
-		visible: true,
+		visibleOnAllWorkspaces: true,
+		focus: false,
+		visible: false,
 	});
-	console.log("new window", newWindow);
 
 	await new Promise<void>((resolve, reject) => {
 		newWindow.once("tauri://created", () => {
-			console.log("new window created");
 			resolve();
 		});
 		newWindow.once("tauri://error", (event) => reject(event.payload));
 	});
 
-	const enabled = await newWindow.isEnabled();
-	console.log("new window enabled", enabled);
+	await configureOverlayWindow(newWindow);
+	await newWindow.show();
+	await newWindow.setFocus();
+
 	return newWindow;
+}
+
+export async function toggleFloatingWindow() {
+	const existing = await WebviewWindow.getByLabel(FLOATING_WINDOW);
+
+	if (existing) {
+		if (await existing.isVisible()) {
+			return await closeFloatingWindow();
+		}
+
+		return await openFloatingWindow();
+	}
+
+	return await openFloatingWindow();
 }

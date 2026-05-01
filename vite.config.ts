@@ -29,5 +29,8 @@ export default defineConfig(async () => ({
 			// 3. tell Vite to ignore watching `src-tauri`
 			ignored: ["**/src-tauri/**"],
 		},
+		__VUE_OPTIONS_API__: true,
+		__VUE_PROD_DEVTOOLS__: false,
+		__VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
 	},
 }));

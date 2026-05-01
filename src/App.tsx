@@ -2,39 +2,45 @@ import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import { useEffect } from "react";
 import "./App.css";
 import MDWrapper from "./markdown/wrapper";
-import { openFloatingWindow } from "./popup";
+import { toggleFloatingWindow } from "./popup";
+
+const TOGGLE_POP_UP_KEYBIND = "Control+Shift+J";
 
 function App() {
 	async function onShortcut(source: "local" | "global", shortcut: string) {
 		console.log("HIT A SHORTCUT!", source, shortcut);
 
 		if (source === "global") {
-			void openFloatingWindow();
+			try {
+				await toggleFloatingWindow();
+			} catch (error) {
+				console.error("Failed to toggle floating window", error);
+			}
 		}
 	}
 
 	useEffect(() => {
-		const shortcut = "Control+Shift+J";
-		function onLocalKeydown(event: KeyboardEvent) {
-			const passed =
-				event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "m";
-			if (passed) {
-				event.preventDefault();
-				onShortcut("local", "markdown");
-			}
-		}
+		let disposed = false;
 
-		window.addEventListener("keydown", onLocalKeydown);
+		const registration = (async () => {
+			await unregister(TOGGLE_POP_UP_KEYBIND).catch(() => {});
+			if (disposed) return;
 
-		register(shortcut, (e) => {
-			if (e.state === "Pressed") {
-				onShortcut("global", "markdown");
-			}
+			await register(TOGGLE_POP_UP_KEYBIND, (e) => {
+				if (disposed) return;
+				if (e.state === "Pressed") void onShortcut("global", "markdown");
+			});
+		})().catch((error) => {
+			console.error("Failed to register global shortcut", error);
 		});
 
 		return () => {
-			window.removeEventListener("keydown", onLocalKeydown);
-			unregister(shortcut);
+			disposed = true;
+			void registration.then(() =>
+				unregister(TOGGLE_POP_UP_KEYBIND).catch((error) => {
+					console.error("Failed to unregister global shortcut", error);
+				}),
+			);
 		};
 	}, []);
 
