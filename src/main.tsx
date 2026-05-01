@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import App from "./App";
-import FloatingNoteEditor from "./FloatingNoteEditor";
+import App from "./app/App";
+import FloatingNoteEditor from "./notepad/FloatingNoteEditor";
 
 const route = document.location.pathname;
 if (route === "/floating-note") {
