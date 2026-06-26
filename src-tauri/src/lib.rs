@@ -6,189 +6,205 @@ mod notepad;
 /// Apply always-on-top / workspace overlay behavior used by the floating notepad (`notepad`).
 /// Invoked only from Rust; never exposed over IPC so the UI cannot change this surface.
 pub(crate) fn apply_notepad_overlay<R: tauri::Runtime>(
-	app: &tauri::AppHandle<R>,
-	window: &tauri::WebviewWindow<R>,
+    app: &tauri::AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
-	window
-		.set_always_on_top(true)
-		.map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.set_always_on_top(true).map_err(|e| e.to_string())?;
+        window
+            .set_visible_on_all_workspaces(true)
+            .map_err(|e| e.to_string())?;
+        let _ = app;
+    }
 
-	#[cfg(target_os = "macos")]
-	{
-		window
-			.set_visible_on_all_workspaces(true)
-			.map_err(|e| e.to_string())?;
-		macos::configure_fullscreen_overlay(window).map_err(|e| e.to_string())?;
-		app.set_activation_policy(tauri::ActivationPolicy::Regular)
-			.map_err(|e| e.to_string())?;
-	}
+    #[cfg(target_os = "macos")]
+    {
+        // Do not call [`WebviewWindow::set_always_on_top`] here: Tao applies `NSFloatingWindowLevel`
+        // asynchronously, which routinely wins the race after we set a higher overlay level and
+        // strands the sheet under the front app. Level is handled only via `configure_fullscreen_overlay`.
+        macos::configure_fullscreen_overlay(window).map_err(|e| e.to_string())?;
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory)
+            .map_err(|e| e.to_string())?;
+    }
 
-	#[cfg(not(target_os = "macos"))]
-	{
-		let _ = app;
-		window
-			.set_visible_on_all_workspaces(true)
-			.map_err(|e| e.to_string())?;
-	}
+    Ok(())
+}
 
-	Ok(())
+/// Re-run after [`WebviewWindow::show`] — some Cocoa paths adjust level/order on display.
+#[cfg(target_os = "macos")]
+pub(crate) fn reassert_notepad_macos_overlay<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory)
+        .map_err(|error| error.to_string())?;
+    macos::order_floating_notepad_front(window).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn is_notepad_overlay_visible<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return macos::is_window_visible(window).unwrap_or(false);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.is_visible().unwrap_or(false)
+    }
+}
+
+pub(crate) fn hide_notepad_overlay<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::hide_window(window).map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.hide().map_err(|error| error.to_string())
+    }
 }
 
 pub(crate) fn prepare_notepad_create_activation_policy<R: tauri::Runtime>(
-	app: &tauri::AppHandle<R>,
+    app: &tauri::AppHandle<R>,
 ) -> Result<(), String> {
-	#[cfg(target_os = "macos")]
-	app.set_activation_policy(tauri::ActivationPolicy::Accessory)
-		.map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory)
+        .map_err(|error| error.to_string())?;
 
-	#[cfg(not(target_os = "macos"))]
-	let _ = app;
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 
-	Ok(())
+    Ok(())
 }
 
 pub(crate) fn restore_regular_activation_policy<R: tauri::Runtime>(
-	app: &tauri::AppHandle<R>,
+    app: &tauri::AppHandle<R>,
 ) -> Result<(), String> {
-	#[cfg(target_os = "macos")]
-	app.set_activation_policy(tauri::ActivationPolicy::Regular)
-		.map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Regular)
+        .map_err(|error| error.to_string())?;
 
-	#[cfg(not(target_os = "macos"))]
-	let _ = app;
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 
-	Ok(())
+    Ok(())
 }
 
 pub(crate) fn deactivate_app_shell() {
-	#[cfg(target_os = "macos")]
-	macos::deactivate_application();
-}
-
-pub(crate) fn try_activate_first_foreign_visible() -> bool {
-	#[cfg(target_os = "macos")]
-	{
-		return macos::try_activate_first_visible_foreign_candidate();
-	}
-	#[cfg(not(target_os = "macos"))]
-	false
+    #[cfg(target_os = "macos")]
+    macos::deactivate_application();
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
-	use objc2_app_kit::{
-		NSApplicationActivationOptions, NSApplicationActivationPolicy, NSRunningApplication,
-		NSWorkspace,
-	};
-	use objc2::{class, msg_send, runtime::AnyObject};
+    use objc2::{runtime::AnyObject, ClassType, MainThreadMarker};
+    use objc2_app_kit::{
+        NSApplication, NSPanel, NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior,
+        NSWindowStyleMask,
+    };
 
-	const OVERLAY_WINDOW_LEVEL: isize = 10_000;
-	const CAN_JOIN_ALL_SPACES: usize = 1 << 0;
-	const STATIONARY: usize = 1 << 4;
-	const FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+    /// Collection behavior for a HUD that should be able to appear while *other* apps are
+    /// fullscreen. Keep this in one AppKit call; Tauri/Tao's workspace setter only toggles
+    /// `CanJoinAllSpaces` and can erase the fullscreen auxiliary hints.
+    fn notepad_collection_behavior() -> NSWindowCollectionBehavior {
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::Stationary
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::FullScreenAllowsTiling
+            | NSWindowCollectionBehavior::CanJoinAllApplications
+    }
 
-	pub(super) fn configure_fullscreen_overlay<R: tauri::Runtime>(
-		window: &tauri::WebviewWindow<R>,
-	) -> tauri::Result<()> {
-		let ns_window = window.ns_window()?;
+    pub(super) fn configure_fullscreen_overlay<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<()> {
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let obj = unsafe { &*(ptr as *mut AnyObject) };
+        unsafe {
+            AnyObject::set_class(obj, NSPanel::class());
+        }
 
-		unsafe {
-			let ns_window = ns_window.cast::<AnyObject>();
-			let _: () = msg_send![ns_window, setLevel: OVERLAY_WINDOW_LEVEL];
+        let w = unsafe { &*ptr };
+        w.setStyleMask(
+            w.styleMask()
+                | NSWindowStyleMask::UtilityWindow
+                | NSWindowStyleMask::NonactivatingPanel,
+        );
+        w.setLevel(NSScreenSaverWindowLevel);
+        w.setCollectionBehavior(notepad_collection_behavior());
+        w.setExcludedFromWindowsMenu(true);
+        w.setHidesOnDeactivate(false);
 
-			let behavior = CAN_JOIN_ALL_SPACES | STATIONARY | FULL_SCREEN_AUXILIARY;
-			let _: () = msg_send![ns_window, setCollectionBehavior: behavior];
-		}
+        let panel = unsafe { &*(ptr as *mut NSPanel) };
+        panel.setFloatingPanel(true);
+        panel.setBecomesKeyOnlyIfNeeded(false);
+        panel.setWorksWhenModal(true);
+        Ok(())
+    }
 
-		Ok(())
-	}
+    pub(super) fn order_floating_notepad_front<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<()> {
+        configure_fullscreen_overlay(window)?;
 
-	pub(super) fn deactivate_application() {
-		unsafe {
-			let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
-			let _: () = msg_send![app, deactivate];
-		}
-	}
+        if let Some(mtm) = MainThreadMarker::new() {
+            let app = NSApplication::sharedApplication(mtm);
+            #[allow(deprecated)]
+            app.activateIgnoringOtherApps(true);
+        }
 
-	pub(super) fn first_visible_foreign_candidate_pid() -> Option<i32> {
-		let ours = std::process::id() as i32;
-		let workspace = NSWorkspace::sharedWorkspace();
-		let apps = workspace.runningApplications();
-		let n = apps.count();
-		let n = usize::try_from(n).unwrap_or(0);
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let w = unsafe { &*ptr };
+        w.makeKeyAndOrderFront(None::<&AnyObject>);
+        w.orderFrontRegardless();
+        Ok(())
+    }
 
-		for idx in 0..n {
-			let ra = apps.objectAtIndex(idx as _);
-			let pid = ra.processIdentifier();
-			if pid <= 0 || pid == ours {
-				continue;
-			}
-			if ra.isTerminated() {
-				continue;
-			}
-			if ra.isHidden() {
-				continue;
-			}
-			if ra.activationPolicy() != NSApplicationActivationPolicy::Regular {
-				continue;
-			}
-			return Some(pid);
-		}
+    pub(super) fn is_window_visible<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<bool> {
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let w = unsafe { &*ptr };
+        Ok(w.isVisible())
+    }
 
-		None
-	}
+    pub(super) fn hide_window<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<()> {
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let w = unsafe { &*ptr };
+        w.orderOut(None::<&AnyObject>);
+        Ok(())
+    }
 
-	pub(super) fn try_activate_first_visible_foreign_candidate() -> bool {
-		let Some(pid) = first_visible_foreign_candidate_pid() else {
-			return false;
-		};
-		activate_pid(pid)
-	}
-
-	pub(super) fn activate_pid(pid: i32) -> bool {
-		if pid <= 0 {
-			return false;
-		}
-		let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
-			return false;
-		};
-		#[allow(deprecated)]
-		let options = NSApplicationActivationOptions::ActivateAllWindows.union(
-			NSApplicationActivationOptions::ActivateIgnoringOtherApps,
-		);
-		target.activateWithOptions(options)
-	}
+    pub(super) fn deactivate_application() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            let app = NSApplication::sharedApplication(mtm);
+            app.deactivate();
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-	let builder = tauri::Builder::default();
-	#[cfg(not(any(target_os = "android", target_os = "ios")))]
-	let builder = builder.plugin(notepad::shortcut_plugin());
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.plugin(notepad::shortcut_plugin()).setup(|app| {
+        #[cfg(target_os = "macos")]
+        app.handle()
+            .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
 
-	builder
-		.plugin(tauri_plugin_opener::init())
-		.setup(|app| {
-			#[cfg(target_os = "macos")]
-			app.handle()
-				.set_activation_policy(tauri::ActivationPolicy::Regular)?;
+        notepad::prefetch_hidden(app.handle()).map_err(|e| e.to_string())?;
+        Ok(())
+    });
 
-			tauri::WebviewWindowBuilder::new(
-				app,
-				"main",
-				tauri::WebviewUrl::App("index.html".into()),
-			)
-			.title("notetaker")
-			.inner_size(800.0, 600.0)
-			.build()?;
-
-			#[cfg(not(any(target_os = "android", target_os = "ios")))]
-			if let Err(e) = notepad::prefetch_hidden(app.handle()) {
-				eprintln!("floating-note prefetch: {e}");
-			}
-
-			Ok(())
-		})
-		.run(tauri::generate_context!())
-		.expect("error while running tauri application");
+    builder
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

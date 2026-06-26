@@ -1,13 +1,5 @@
 import MDWrapper from "./markdown/wrapper";
 
-function focusNotepad() {
-	const element = document.getElementById("floating-note-editor");
-	if (element) {
-		element.focus();
-		return;
-	}
-}
-
 export function blurNotepad() {
 	const element = document.getElementById("floating-note-editor");
 	if (element) {
