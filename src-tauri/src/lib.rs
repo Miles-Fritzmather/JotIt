@@ -3,6 +3,24 @@
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod notepad;
 
+#[cfg(target_os = "macos")]
+pub(crate) fn remember_focus_before_notepad_show() {
+    macos::remember_frontmost_application();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn remember_focus_before_notepad_show() {}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn restore_focus_after_notepad_hide() -> bool {
+    macos::restore_frontmost_application()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn restore_focus_after_notepad_hide() -> bool {
+    false
+}
+
 /// Apply always-on-top / workspace overlay behavior used by the floating notepad (`notepad`).
 /// Invoked only from Rust; never exposed over IPC so the UI cannot change this surface.
 pub(crate) fn apply_notepad_overlay<R: tauri::Runtime>(
@@ -104,11 +122,16 @@ pub(crate) fn deactivate_app_shell() {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
     use objc2::{runtime::AnyObject, ClassType, MainThreadMarker};
     use objc2_app_kit::{
-        NSApplication, NSPanel, NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior,
-        NSWindowStyleMask,
+        NSApplication, NSApplicationActivationOptions, NSPanel, NSRunningApplication,
+        NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+        NSWorkspace,
     };
+
+    static LAST_FRONTMOST_APP_PID: AtomicI32 = AtomicI32::new(0);
 
     /// Collection behavior for a HUD that should be able to appear while *other* apps are
     /// fullscreen. Keep this in one AppKit call; Tauri/Tao's workspace setter only toggles
@@ -181,6 +204,37 @@ mod macos {
         let w = unsafe { &*ptr };
         w.orderOut(None::<&AnyObject>);
         Ok(())
+    }
+
+    pub(super) fn remember_frontmost_application() {
+        let Some(frontmost) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
+            return;
+        };
+
+        let pid = frontmost.processIdentifier();
+        if pid > 0 && pid != std::process::id() as i32 && !frontmost.isTerminated() {
+            LAST_FRONTMOST_APP_PID.store(pid, Ordering::Release);
+        }
+    }
+
+    pub(super) fn restore_frontmost_application() -> bool {
+        let pid = LAST_FRONTMOST_APP_PID.swap(0, Ordering::AcqRel);
+        if pid <= 0 {
+            return false;
+        }
+
+        let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        else {
+            return false;
+        };
+        if target.isTerminated() {
+            return false;
+        }
+
+        #[allow(deprecated)]
+        let options = NSApplicationActivationOptions::ActivateAllWindows
+            | NSApplicationActivationOptions::ActivateIgnoringOtherApps;
+        target.activateWithOptions(options)
     }
 
     pub(super) fn deactivate_application() {

@@ -90,7 +90,9 @@ fn close_notepad<R: Runtime>(
 ) -> Result<(), String> {
     let _ = save_window_geometry(app, win);
     crate::hide_notepad_overlay(win)?;
-    crate::deactivate_app_shell();
+    if !crate::restore_focus_after_notepad_hide() {
+        crate::deactivate_app_shell();
+    }
     Ok(())
 }
 
@@ -98,6 +100,7 @@ fn show_notepad<R: Runtime>(
     app: &AppHandle<R>,
     win: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
+    crate::remember_focus_before_notepad_show();
     crate::apply_notepad_overlay(app, win)?;
     win.show().map_err(|e| e.to_string())?;
     #[cfg(not(target_os = "macos"))]
@@ -178,7 +181,9 @@ fn register_window_geometry_persistence<R: Runtime>(
             if let Err(e) = crate::hide_notepad_overlay(&event_win) {
                 eprintln!("floating-note hide on close: {e}");
             }
-            crate::deactivate_app_shell();
+            if !crate::restore_focus_after_notepad_hide() {
+                crate::deactivate_app_shell();
+            }
         }
         _ => {}
     });
@@ -228,6 +233,7 @@ fn apply_overlay_then_show_focus<R: Runtime>(
     app: &AppHandle<R>,
     win: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
+    crate::remember_focus_before_notepad_show();
     crate::apply_notepad_overlay(app, win)?;
     win.show().map_err(|e| e.to_string())?;
     #[cfg(not(target_os = "macos"))]
