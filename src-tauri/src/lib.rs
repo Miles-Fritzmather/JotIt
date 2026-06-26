@@ -135,8 +135,8 @@ mod macos {
     use objc2::{runtime::AnyObject, ClassType, MainThreadMarker};
     use objc2_app_kit::{
         NSApplication, NSApplicationActivationOptions, NSPanel, NSRunningApplication,
-        NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
-        NSWorkspace,
+        NSScreenSaverWindowLevel, NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior,
+        NSWindowStyleMask, NSWorkspace,
     };
 
     static LAST_FRONTMOST_APP_PID: AtomicI32 = AtomicI32::new(0);
@@ -169,6 +169,7 @@ mod macos {
         );
         w.setLevel(NSScreenSaverWindowLevel);
         w.setCollectionBehavior(notepad_collection_behavior());
+        w.setAnimationBehavior(NSWindowAnimationBehavior::None);
         w.setExcludedFromWindowsMenu(true);
         w.setHidesOnDeactivate(false);
 
@@ -210,6 +211,7 @@ mod macos {
     ) -> tauri::Result<()> {
         let ptr = window.ns_window()? as *mut NSWindow;
         let w = unsafe { &*ptr };
+        w.setAnimationBehavior(NSWindowAnimationBehavior::None);
         w.orderOut(None::<&AnyObject>);
         Ok(())
     }

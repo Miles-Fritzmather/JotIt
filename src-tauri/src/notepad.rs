@@ -205,16 +205,8 @@ pub fn build_notepad_window<R: Runtime>(
             .focused(false);
 
     #[cfg(target_os = "macos")]
-    let builder = builder
-        // .decorations(false)
-        .transparent(true);
-    // .effects(
-    //     tauri::window::EffectsBuilder::new()
-    //         .effect(tauri::window::Effect::HudWindow)
-    //         .state(tauri::window::EffectState::Active)
-    //         .radius(12.0)
-    //         .build(),
-    // );
+    // let builder = builder.decorations(false).transparent(true);
+    let builder = builder.transparent(true);
 
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory)
