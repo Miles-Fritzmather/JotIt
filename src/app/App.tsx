@@ -1,4 +1,3 @@
-import MDWrapper from "../notepad/markdown/wrapper";
 import "./App.css";
 
 function App() {
@@ -8,9 +7,7 @@ function App() {
 				id="screen"
 				className="w-screen h-screen flex items-center justify-center"
 			>
-				<div className="">
-					<MDWrapper />
-				</div>
+				<div className="">{/* <MDWrapper /> */}</div>
 			</div>
 		</main>
 	);

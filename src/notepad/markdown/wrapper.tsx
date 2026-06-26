@@ -1,10 +1,12 @@
 import { MilkdownProvider } from "@milkdown/react";
 import { MilkdownEditor } from "./Milkdown";
-import "./Milkdown.css";
 
 const MDWrapper = () => {
 	return (
-		<div className="markdown-wrapper" autoFocus>
+		<div
+			/* className="markdown-wrapper h-full w-full [&_.milkdown]:h-full [&_.milkdown]:w-full [&_.milkdown]:bg-transparent" */
+			autoFocus
+		>
 			<MilkdownProvider>
 				<MilkdownEditor />
 			</MilkdownProvider>

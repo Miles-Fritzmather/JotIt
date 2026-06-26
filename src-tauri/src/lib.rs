@@ -12,6 +12,14 @@ pub(crate) fn remember_focus_before_notepad_show() {
 pub(crate) fn remember_focus_before_notepad_show() {}
 
 #[cfg(target_os = "macos")]
+pub(crate) fn remember_focus_before_notepad_hide() {
+    macos::remember_frontmost_application();
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn remember_focus_before_notepad_hide() {}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn restore_focus_after_notepad_hide() -> bool {
     macos::restore_frontmost_application()
 }
@@ -206,23 +214,20 @@ mod macos {
         Ok(())
     }
 
-    pub(super) fn remember_frontmost_application() {
+    fn current_frontmost_application_pid() -> Option<i32> {
         let Some(frontmost) = NSWorkspace::sharedWorkspace().frontmostApplication() else {
-            return;
+            return None;
         };
 
         let pid = frontmost.processIdentifier();
         if pid > 0 && pid != std::process::id() as i32 && !frontmost.isTerminated() {
-            LAST_FRONTMOST_APP_PID.store(pid, Ordering::Release);
+            Some(pid)
+        } else {
+            None
         }
     }
 
-    pub(super) fn restore_frontmost_application() -> bool {
-        let pid = LAST_FRONTMOST_APP_PID.swap(0, Ordering::AcqRel);
-        if pid <= 0 {
-            return false;
-        }
-
+    fn activate_application_with_pid(pid: i32) -> bool {
         let Some(target) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
         else {
             return false;
@@ -235,6 +240,29 @@ mod macos {
         let options = NSApplicationActivationOptions::ActivateAllWindows
             | NSApplicationActivationOptions::ActivateIgnoringOtherApps;
         target.activateWithOptions(options)
+    }
+
+    pub(super) fn remember_frontmost_application() {
+        if let Some(pid) = current_frontmost_application_pid() {
+            LAST_FRONTMOST_APP_PID.store(pid, Ordering::Release);
+        }
+    }
+
+    pub(super) fn restore_frontmost_application() -> bool {
+        let saved_pid = LAST_FRONTMOST_APP_PID.swap(0, Ordering::AcqRel);
+        let pid = current_frontmost_application_pid().or_else(|| {
+            if saved_pid > 0 {
+                Some(saved_pid)
+            } else {
+                None
+            }
+        });
+
+        let Some(pid) = pid else {
+            return false;
+        };
+
+        activate_application_with_pid(pid)
     }
 
     pub(super) fn deactivate_application() {

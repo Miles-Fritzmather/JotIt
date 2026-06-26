@@ -89,6 +89,7 @@ fn close_notepad<R: Runtime>(
     win: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
     let _ = save_window_geometry(app, win);
+    crate::remember_focus_before_notepad_hide();
     crate::hide_notepad_overlay(win)?;
     if !crate::restore_focus_after_notepad_hide() {
         crate::deactivate_app_shell();
@@ -178,6 +179,7 @@ fn register_window_geometry_persistence<R: Runtime>(
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             let _ = save_window_geometry(&app, &event_win);
+            crate::remember_focus_before_notepad_hide();
             if let Err(e) = crate::hide_notepad_overlay(&event_win) {
                 eprintln!("floating-note hide on close: {e}");
             }
@@ -201,6 +203,18 @@ pub fn build_notepad_window<R: Runtime>(
             .position(geometry.x, geometry.y)
             .visible(false)
             .focused(false);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        // .decorations(false)
+        .transparent(true);
+    // .effects(
+    //     tauri::window::EffectsBuilder::new()
+    //         .effect(tauri::window::Effect::HudWindow)
+    //         .state(tauri::window::EffectState::Active)
+    //         .radius(12.0)
+    //         .build(),
+    // );
 
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory)
