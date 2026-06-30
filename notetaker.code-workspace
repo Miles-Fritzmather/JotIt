@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"path": "src/app",
+			"name": "Settings & App",
+		},
+		{
+			"path": "src/notepad",
+			"name": "Main Notepad",
+		},
+		{
+			"path": ".",
+			"name": "Whole Project",
+		},
+	],
+	"settings": {
+		"terminal.integrated.cwd": "${workspaceFolder:Whole Project}",
+	},
+}

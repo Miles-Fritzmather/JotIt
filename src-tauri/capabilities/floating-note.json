@@ -3,5 +3,5 @@
 	"identifier": "floating-note",
 	"description": "Capability for the floating note editor window",
 	"windows": ["floating-note"],
-	"permissions": ["core:default"]
+	"permissions": ["core:default", "core:window:allow-start-dragging"]
 }

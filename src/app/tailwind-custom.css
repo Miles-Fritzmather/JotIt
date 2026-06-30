@@ -1,0 +1,10 @@
+/**
+ * Custom Tailwind theme & utilities (Tailwind v4).
+ * Slate & Apricot palette.
+ */
+
+@theme {
+	/* ── Core palette ── */
+	--color-accent: #aaaaaa;
+	--color-error: #aa0000;
+}

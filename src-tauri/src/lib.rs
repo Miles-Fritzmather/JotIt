@@ -2,6 +2,8 @@
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod notepad;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod settings;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn remember_focus_before_notepad_show() {
@@ -55,6 +57,37 @@ pub(crate) fn apply_notepad_overlay<R: tauri::Runtime>(
     }
 
     Ok(())
+}
+
+/// Attach the native glass backdrop behind the (transparent) webview.
+///
+/// On macOS 26 (Tahoe) and later this inserts an `NSGlassEffectView` — Apple's real "Liquid Glass"
+/// material — directly behind the webview, mirroring the approach of
+/// `hkandala/tauri-plugin-liquid-glass`. On older systems the class does not exist, so we fall back
+/// to a pinned `NSVisualEffectView` blur.
+///
+/// The fallback blur is pinned to [`NSVisualEffectState::Active`] so macOS never drops it back to
+/// the inactive/clear appearance when the panel is not the key window — that focus-follows behavior
+/// is the reason a CSS `backdrop-filter` blur visibly disappears after a few idle seconds. This is
+/// applied once at window creation; reclassing to `NSPanel` later does not disturb the subview.
+#[cfg(target_os = "macos")]
+pub(crate) fn apply_notepad_vibrancy<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+    // Prefer real Liquid Glass when the OS provides it; otherwise fall through to the blur.
+    if macos::apply_liquid_glass(window).map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+
+    apply_vibrancy(
+        window,
+        NSVisualEffectMaterial::HudWindow,
+        Some(NSVisualEffectState::Active),
+        Some(1.0),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Re-run after [`WebviewWindow::show`] — some Cocoa paths adjust level/order on display.
@@ -132,12 +165,104 @@ pub(crate) fn deactivate_app_shell() {
 mod macos {
     use std::sync::atomic::{AtomicI32, Ordering};
 
-    use objc2::{runtime::AnyObject, ClassType, MainThreadMarker};
-    use objc2_app_kit::{
-        NSApplication, NSApplicationActivationOptions, NSPanel, NSRunningApplication,
-        NSScreenSaverWindowLevel, NSWindow, NSWindowAnimationBehavior, NSWindowCollectionBehavior,
-        NSWindowStyleMask, NSWorkspace,
+    use objc2::{
+        msg_send,
+        runtime::{AnyClass, AnyObject},
+        sel, ClassType, MainThreadMarker,
     };
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationOptions, NSColor, NSPanel, NSRunningApplication,
+        NSScreenSaverWindowLevel, NSView, NSWindow, NSWindowAnimationBehavior, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSWorkspace,
+    };
+
+    /// Liquid Glass material variant for the notepad backdrop. **Change this one constant to
+    /// restyle the glass.** `NSGlassEffectView` exposes a (private) `variant` property; these are
+    /// the known values on macOS 26. `Clear` (1) is the most transparent / "liquid" looking;
+    /// `Regular` (0) is the standard frosted material.
+    ///
+    /// ```text
+    ///  0 Regular           8 ControlCenter      16 Sidebar
+    ///  1 Clear             9 NotificationCenter  17 AbuttedSidebar
+    ///  2 Dock             10 Monogram            18 Inspector
+    ///  3 AppIcons         11 Bubbles             19 Control
+    ///  4 Widgets          12 Identity            20 Loupe
+    ///  5 Text             13 FocusBorder         21 Slider
+    ///  6 AVPlayer         14 FocusPlatter        22 Camera
+    ///  7 FaceTime         15 Keyboard            23 CartouchePopover
+    /// ```
+    const NOTEPAD_GLASS_VARIANT: isize = 1; // Clear — most transparent / liquid
+
+    /// Notepad corner radius; matches the CSS `rounded-[16px]` on the editor shell so the native
+    /// glass is clipped to the same rounded rectangle as the webview content.
+    const NOTEPAD_CORNER_RADIUS: f64 = 16.0;
+    /// `NSAutoresizingMaskOptions`: `WidthSizable | HeightSizable`, so the glass tracks resizes.
+    const NS_VIEW_FLEXIBLE_SIZE: usize = (1 << 1) | (1 << 4);
+    /// `NSWindowOrderingMode::Below` — keep the glass at the very back, under the webview.
+    const NS_WINDOW_BELOW: isize = -1;
+
+    /// Insert an `NSGlassEffectView` (macOS 26+ "Liquid Glass") behind the transparent webview.
+    ///
+    /// Returns `Ok(false)` when the class is unavailable (pre-Tahoe) so the caller can fall back to
+    /// `NSVisualEffectView`. The view is sized to the content view, clipped to the notepad corner
+    /// radius, and ordered below the webview so the editor renders on top of the glass.
+    pub(super) fn apply_liquid_glass<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<bool> {
+        let Some(glass_class) = AnyClass::get(c"NSGlassEffectView") else {
+            return Ok(false);
+        };
+
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let ns_window = unsafe { &*ptr };
+        let Some(content_view) = ns_window.contentView() else {
+            return Ok(false);
+        };
+        let bounds = content_view.bounds();
+
+        // A very light tint lives *inside* the glass (refracted by it) rather than as a flat CSS
+        // film on top, so the material still reads as real Liquid Glass. Keep alpha low — Apple's
+        // own glass uses little to no tint; this is just enough to bias it slightly dark for white
+        // text legibility. Raise alpha for a moodier/darker glass, drop to 0.0 (or remove) for clear.
+        let tint = NSColor::colorWithSRGBRed_green_blue_alpha(0.1, 0.0, 0.0, 0.00);
+
+        unsafe {
+            let glass: *mut AnyObject = msg_send![glass_class, alloc];
+            let glass: *mut AnyObject = msg_send![glass, initWithFrame: bounds];
+            let _: () = msg_send![glass, setAutoresizingMask: NS_VIEW_FLEXIBLE_SIZE];
+            let _: () = msg_send![glass, setWantsLayer: true];
+            let _: () = msg_send![glass, setCornerRadius: NOTEPAD_CORNER_RADIUS];
+            let _: () = msg_send![glass, setTintColor: &*tint];
+            set_glass_variant(glass, NOTEPAD_GLASS_VARIANT);
+
+            let content_ptr: *const NSView = &*content_view;
+            let _: () = msg_send![
+                content_ptr,
+                addSubview: glass,
+                positioned: NS_WINDOW_BELOW,
+                relativeTo: std::ptr::null_mut::<AnyObject>(),
+            ];
+        }
+
+        Ok(true)
+    }
+
+    /// Set the (private) `variant` on an `NSGlassEffectView`. Prefers the public-looking
+    /// `setVariant:` and falls back to the `_setVariant:` ivar setter on builds that only expose the
+    /// private selector. Silently no-ops if neither responds, so a macOS point release that renames
+    /// or drops the selector can't crash the notepad.
+    unsafe fn set_glass_variant(glass: *mut AnyObject, variant: isize) {
+        let responds_public: bool = msg_send![glass, respondsToSelector: sel!(setVariant:)];
+        if responds_public {
+            let _: () = msg_send![glass, setVariant: variant];
+            return;
+        }
+
+        let responds_private: bool = msg_send![glass, respondsToSelector: sel!(_setVariant:)];
+        if responds_private {
+            let _: () = msg_send![glass, _setVariant: variant];
+        }
+    }
 
     static LAST_FRONTMOST_APP_PID: AtomicI32 = AtomicI32::new(0);
 
@@ -162,11 +287,29 @@ mod macos {
         }
 
         let w = unsafe { &*ptr };
+        // Keep the window `Titled` (do NOT use `.decorations(false)` on the builder): the window
+        // server only honors `FullScreenAuxiliary` for titled panels, so a borderless window stops
+        // floating over other apps' fullscreen spaces. We get the chromeless look by extending the
+        // content view under a transparent, button-less titlebar instead of removing it.
         w.setStyleMask(
             w.styleMask()
+                | NSWindowStyleMask::Titled
+                | NSWindowStyleMask::FullSizeContentView
                 | NSWindowStyleMask::UtilityWindow
                 | NSWindowStyleMask::NonactivatingPanel,
         );
+        w.setTitlebarAppearsTransparent(true);
+        w.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        w.setMovableByWindowBackground(true);
+        for button in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = w.standardWindowButton(button) {
+                button.setHidden(true);
+            }
+        }
         w.setLevel(NSScreenSaverWindowLevel);
         w.setCollectionBehavior(notepad_collection_behavior());
         w.setAnimationBehavior(NSWindowAnimationBehavior::None);
@@ -287,6 +430,19 @@ pub fn run() {
         notepad::prefetch_hidden(app.handle()).map_err(|e| e.to_string())?;
         Ok(())
     });
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        notepad::list_notes,
+        notepad::read_note,
+        notepad::create_note,
+        notepad::save_note,
+        notepad::update_note,
+        notepad::delete_note,
+        settings::get_settings,
+        settings::set_accent_color,
+        settings::reveal_notes_directory,
+        settings::open_settings
+    ]);
 
     builder
         .run(tauri::generate_context!())
