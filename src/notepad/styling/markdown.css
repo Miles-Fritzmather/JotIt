@@ -1,0 +1,293 @@
+/*
+The backdrop is a native macOS Liquid Glass view (NSGlassEffectView, falling back to
+NSVisualEffectView pre-Tahoe) applied in apply_notepad_vibrancy — not a CSS backdrop-filter —
+so it persists when the panel is not focused. The shell is kept TRANSPARENT (no bg-*): the
+darkening tint now lives inside the native glass, so any CSS fill here would just flatten the
+glass back into a solid film. Keep this background-free.
+*/
+
+html,
+body,
+#root {
+	height: 100%;
+	overflow: hidden;
+	overscroll-behavior: none;
+}
+
+#floating-note-editor {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	width: 100vw;
+	overflow: hidden;
+	overscroll-behavior: none;
+	border-radius: 16px;
+	font-family: system-ui, sans-serif;
+	font-size: 13px;
+	line-height: 1.45;
+	-webkit-font-smoothing: antialiased;
+}
+
+#floating-note-editor ::selection {
+	background: rgba(125, 211, 252, 0.35);
+	color: #fff;
+}
+
+#floating-note-editor .note-navbar:active {
+	cursor: grabbing;
+}
+
+#floating-note-editor .note-content {
+	position: relative;
+	z-index: 10;
+	display: flex;
+	flex: 1;
+	min-height: 0;
+	align-items: center;
+	justify-content: center;
+	padding: 0 2rem;
+	text-align: center;
+	font-size: 13px;
+	color: rgba(255, 255, 255, 0.45);
+}
+
+#floating-note-editor #markdown-wrapper {
+	position: relative;
+	z-index: 10;
+	flex: 1;
+	min-height: 0;
+	width: 100%;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+#floating-note-editor [data-milkdown-root] {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+#floating-note-editor .milkdown {
+	flex: 1;
+	min-height: 0 !important;
+	width: 100% !important;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	background: transparent !important;
+	--crepe-color-background: transparent;
+	--crepe-color-error: rgb(255 140 157);
+	--crepe-color-hover: var(--color-accent);
+	--crepe-color-inline-area: var(--color-accent);
+	--crepe-color-inline-code: var(--color-accent);
+	--crepe-color-inverse: rgb(255 255 255 / 0.9);
+	--crepe-color-on-background: rgb(255 255 255 / 0.94);
+	--crepe-color-on-inverse: rgb(18 20 24 / 0.94);
+	--crepe-color-on-secondary: rgb(255 255 255 / 0.92);
+	--crepe-color-on-surface: rgb(255 255 255 / 0.92);
+	--crepe-color-on-surface-variant: rgb(255 255 255 / 0.66);
+	--crepe-color-outline: var(--color-accent);
+	--crepe-color-primary: var(--color-accent);
+	--crepe-color-secondary: rgb(255 255 255 / 0.16);
+	--crepe-color-selected: var(--color-accent);
+	--crepe-color-surface-low: rgb(255 255 255 / 0.1);
+	--crepe-color-surface: rgb(20 23 28 / 0.72);
+	--crepe-font-code: ui-monospace;
+	--crepe-font-default: system-ui;
+	--crepe-font-title: system-ui;
+	--crepe-shadow-1: 0 12px 34px rgb(0 0 0 / 0.28);
+	--crepe-shadow-2: 0 18px 44px rgb(0 0 0 / 0.34);
+}
+
+#floating-note-editor .milkdown .editor {
+	flex: 1;
+	min-height: 0 !important;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	background: transparent !important;
+	color: rgba(255, 255, 255, 0.95) !important;
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-accent) transparent;
+}
+
+#floating-note-editor .milkdown .editor::-webkit-scrollbar {
+	width: 8px;
+}
+
+#floating-note-editor .milkdown .editor::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+#floating-note-editor .milkdown .editor::-webkit-scrollbar-thumb {
+	border-radius: 9999px;
+	background-color: var(--color-accent);
+}
+
+#floating-note-editor .overflow-y-auto {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-accent) transparent;
+}
+
+#floating-note-editor .overflow-y-auto::-webkit-scrollbar {
+	width: 8px;
+}
+
+#floating-note-editor .overflow-y-auto::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+#floating-note-editor .overflow-y-auto::-webkit-scrollbar-thumb {
+	border-radius: 9999px;
+	background-color: var(--color-accent);
+}
+
+#floating-note-editor .ProseMirror {
+	background: transparent !important;
+	padding-left: 1.75rem !important;
+	padding-right: 1.75rem !important;
+	padding-top: 1.5rem !important;
+	padding-bottom: 1.75rem !important;
+	font-family: system-ui, sans-serif !important;
+	font-size: 13px !important;
+	line-height: 1.45 !important;
+	color: rgba(255, 255, 255, 0.95) !important;
+	caret-color: #fff;
+	outline: none;
+}
+
+#floating-note-editor .ProseMirror p {
+	padding-top: 0.125rem !important;
+	padding-bottom: 0.125rem !important;
+	font-size: 13px !important;
+	line-height: 1.45 !important;
+}
+
+#floating-note-editor .ProseMirror li {
+	margin-top: 0 !important;
+	margin-bottom: 0 !important;
+	font-size: 13px !important;
+	line-height: 1.45 !important;
+}
+
+#floating-note-editor .ProseMirror h1 {
+	margin-top: 0.5rem !important;
+	padding-top: 1px !important;
+	padding-bottom: 1px !important;
+	font-family: system-ui, sans-serif !important;
+	font-size: 1.125rem !important;
+	font-weight: 600 !important;
+	line-height: 1.375 !important;
+	color: #fff !important;
+}
+
+#floating-note-editor .ProseMirror h2 {
+	margin-top: 0.5rem !important;
+	padding-top: 1px !important;
+	padding-bottom: 1px !important;
+	font-family: system-ui, sans-serif !important;
+	font-size: 1rem !important;
+	font-weight: 600 !important;
+	line-height: 1.375 !important;
+	color: #fff !important;
+}
+
+#floating-note-editor .ProseMirror h3,
+#floating-note-editor .ProseMirror h4,
+#floating-note-editor .ProseMirror h5,
+#floating-note-editor .ProseMirror h6 {
+	margin-top: 0.375rem !important;
+	padding-top: 1px !important;
+	padding-bottom: 1px !important;
+	font-family: system-ui, sans-serif !important;
+	font-size: 0.875rem !important;
+	font-weight: 600 !important;
+	line-height: 1.375 !important;
+	color: #fff !important;
+}
+
+#floating-note-editor .ProseMirror blockquote {
+	margin-top: 0.375rem !important;
+	margin-bottom: 0.375rem !important;
+	border-left: 2px solid rgba(255, 255, 255, 0.3) !important;
+	padding-top: 0.125rem !important;
+	padding-bottom: 0.125rem !important;
+	padding-left: 0.625rem !important;
+	color: rgba(255, 255, 255, 0.7) !important;
+}
+
+#floating-note-editor .ProseMirror a {
+	color: rgb(186 230 253) !important;
+	text-decoration-color: rgba(186, 230, 253, 0.6) !important;
+}
+
+#floating-note-editor .ProseMirror code {
+	border-radius: 0.25rem !important;
+	background: rgba(0, 0, 0, 0.25) !important;
+}
+
+#floating-note-editor .ProseMirror pre {
+	border-radius: 0.375rem !important;
+	background: rgba(0, 0, 0, 0.25) !important;
+	padding: 0.75rem !important;
+}
+
+#floating-note-editor .ProseMirror ul,
+#floating-note-editor .ProseMirror ol {
+	margin-top: 0.25rem;
+	margin-bottom: 0.25rem;
+}
+
+#floating-note-editor .milkdown-list-item-block {
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+#floating-note-editor .milkdown-list-item-block > .list-item {
+	align-items: flex-start;
+}
+
+#floating-note-editor .milkdown-list-item-block li {
+	gap: 0.5rem;
+}
+
+#floating-note-editor .milkdown-list-item-block > .list-item > .children {
+	min-width: 0;
+	flex: 1;
+}
+
+#floating-note-editor .milkdown-list-item-block li .label-wrapper {
+	display: flex;
+	height: 21px;
+	width: 1rem;
+	align-items: flex-start;
+	justify-content: flex-end;
+	padding-top: 2px;
+}
+
+#floating-note-editor .milkdown-list-item-block li .label-wrapper .label {
+	height: 19px;
+	width: 1rem;
+	padding: 0;
+	text-align: right;
+	font-size: 13px;
+	line-height: 19px;
+}
+
+#floating-note-editor .milkdown-code-block,
+#floating-note-editor .milkdown-code-block .cm-editor,
+#floating-note-editor .milkdown-code-block .cm-gutters {
+	background: rgba(0, 0, 0, 0.25);
+}
+
+#floating-note-editor .milkdown-link-edit,
+#floating-note-editor .milkdown-link-preview,
+#floating-note-editor .milkdown-slash-menu,
+#floating-note-editor .milkdown-toolbar {
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	background: rgba(10, 10, 10, 0.75);
+	backdrop-filter: blur(40px);
+}

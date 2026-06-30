@@ -1,0 +1,5 @@
+@import "./markdown.css";
+
+.milkdown-block-handle {
+	display: none !important;
+}
