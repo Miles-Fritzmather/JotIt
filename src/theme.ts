@@ -31,6 +31,10 @@ export function openSettings() {
 	return invoke<void>("open_settings");
 }
 
+export function closeNotepad() {
+	return invoke<void>("close_notepad_command");
+}
+
 /** Convert `#rgb` / `#rrggbb` to the space-separated channel triplet CSS `rgb()` expects. */
 export function hexToRgbChannels(hex: string): string | null {
 	const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());

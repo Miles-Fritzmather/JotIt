@@ -33,8 +33,41 @@ body,
 	color: #fff;
 }
 
-#floating-note-editor .note-navbar:active {
-	cursor: grabbing;
+#floating-note-editor .note-navbar.unfocused {
+	/* Base background with 2% accent, then applied at 20% opacity */
+	background-color: color-mix(
+		in srgb,
+		transparent 80%,
+		color-mix(in srgb, rgb(20 23 28) 90%, var(--color-accent) 10%) 20%
+	);
+}
+
+#floating-note-editor .note-navbar.focused {
+	/* Base background with 2% accent, then applied at 20% opacity */
+	background-color: color-mix(
+		in srgb,
+		transparent 80%,
+		color-mix(in srgb, rgb(20 23 28) 90%, var(--color-accent) 25%) 20%
+	);
+}
+
+/* One drag-region on the header: layout wrappers don't steal drags; buttons stay clickable */
+#floating-note-editor .drag-region * {
+	pointer-events: none;
+}
+
+#floating-note-editor
+	.drag-region
+	:is(
+		button,
+		a,
+		input,
+		textarea,
+		select,
+		[role="button"],
+		[data-tauri-drag-region="false"]
+	) {
+	pointer-events: auto;
 }
 
 #floating-note-editor .note-content {
@@ -107,10 +140,12 @@ body,
 	min-height: 0 !important;
 	overflow-y: auto;
 	overscroll-behavior: contain;
+	margin-top: 1.5rem;
 	background: transparent !important;
 	color: rgba(255, 255, 255, 0.95) !important;
 	scrollbar-width: thin;
-	scrollbar-color: var(--color-accent) transparent;
+	scrollbar-color: color-mix(in srgb, var(--color-accent) 10%, transparent)
+		transparent;
 }
 
 #floating-note-editor .milkdown .editor::-webkit-scrollbar {
@@ -163,6 +198,12 @@ body,
 	padding-bottom: 0.125rem !important;
 	font-size: 13px !important;
 	line-height: 1.45 !important;
+}
+
+/* Hide Crepe/Milkdown placeholder helper text (e.g. "please enter") on empty lines. */
+#floating-note-editor .ProseMirror [data-placeholder]::before {
+	content: none !important;
+	display: none !important;
 }
 
 #floating-note-editor .ProseMirror li {

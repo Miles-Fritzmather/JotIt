@@ -1,335 +1,123 @@
-import { AlertTriangleIcon, SettingsIcon, StarIcon } from "lucide-react";
+import { AlertTriangleIcon, SettingsIcon, StarIcon, XIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-	useCallback,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-	type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
-import { openSettings } from "../theme";
-import { HStack, Substack } from "./lib/helperdivs";
-import { cn } from "./lib/utils";
+	applyAccent,
+	type BackdropMode,
+	closeNotepad,
+	getSettings,
+	hexToRgbChannels,
+	revealNotesDirectory,
+	setAccentColor,
+	setBackdropMode,
+} from "../theme";
+import { IconButton } from "./Button";
+import { DragRegion, HStack, Substack } from "./lib/helperdivs";
+import { cn, messageFromError } from "./lib/utils";
 import MDWrapper from "./markdown/wrapper";
-import {
-	createNote,
-	deleteNote,
-	listNotes,
-	noteSummaryFromDocument,
-	readNote,
-	saveNote,
-	titleFromMarkdown,
-	type NoteDocument,
-	type NoteSummary,
-} from "./notes";
+import { useErrors } from "./providers/useErrors";
+import { useFocus } from "./providers/useFocus";
+import { useNotes } from "./providers/useNotes";
 import "./styling/main.css";
 
-export function blurNotepad() {
-	const element = document.getElementById("floating-note-editor");
-	if (element) {
-		element.blur();
-		return;
-	}
-}
-
-const SAVE_DELAY_MS = 500;
-const SEARCH_RESULT_LIMIT = 12;
-
-interface PendingSave {
-	id: string;
-	markdown: string;
-}
-
-function messageFromError(error: unknown) {
-	return error instanceof Error ? error.message : String(error);
-}
-
-function mergeNoteSummary(notes: NoteSummary[], summary: NoteSummary) {
-	const next = notes.some((note) => note.id === summary.id)
-		? notes.map((note) => (note.id === summary.id ? summary : note))
-		: [summary, ...notes];
-
-	return next;
-}
-
 const FloatingNoteEditor = () => {
-	const [notes, setNotes] = useState<NoteSummary[]>([]);
-	const [activeNote, setActiveNote] = useState<NoteDocument | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
+	const { setError, error, cleanError } = useErrors();
+	const isFocused = useFocus();
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-	const activeNoteRef = useRef<NoteDocument | null>(null);
-	const notesRef = useRef<NoteSummary[]>([]);
-	const pendingSaveRef = useRef<PendingSave | null>(null);
-	const saveTimerRef = useRef<number | null>(null);
+	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+	const [notesDirectory, setNotesDirectory] = useState("");
+	const [accent, setAccent] = useState("#ff6363");
+	const [backdropMode, setBackdropModeState] = useState<BackdropMode>("glass");
+	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
-	const [showNoteIndicator, setShowNoteIndicator] = useState(false);
+	const accentSaveTimerRef = useRef<number | null>(null);
+	const [shouldShowNoteIndicator, setShouldShowNoteIndicator] = useState(false);
+	const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [showError, setShowError] = useState(false);
 	const showNoteIndicatorTimeoutRef = useRef<ReturnType<
 		typeof setTimeout
 	> | null>(null);
-	const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const [showError, setShowError] = useState(false);
 
-	useEffect(() => {
-		activeNoteRef.current = activeNote;
-	}, [activeNote]);
+	const {
+		notes,
+		activeNote,
+		isLoading,
+		cycleNote,
+		createNewNote,
+		deleteActiveNote,
+		loadNote,
+		handleMarkdownChange,
+		updateNoteMetadata,
+	} = useNotes();
 
-	useEffect(() => {
-		notesRef.current = notes;
-	}, [notes]);
-
-	const clearSaveTimer = useCallback(() => {
-		if (saveTimerRef.current !== null) {
-			window.clearTimeout(saveTimerRef.current);
-			saveTimerRef.current = null;
+	function showNoteIndicator() {
+		setShouldShowNoteIndicator(true);
+		if (showNoteIndicatorTimeoutRef.current) {
+			clearTimeout(showNoteIndicatorTimeoutRef.current);
 		}
-	}, []);
+		showNoteIndicatorTimeoutRef.current = setTimeout(() => {
+			setShouldShowNoteIndicator(false);
+		}, 1000);
+	}
 
-	const applySavedSummary = useCallback((summary: NoteSummary) => {
-		setNotes((currentNotes) => mergeNoteSummary(currentNotes, summary));
-		setActiveNote((currentNote) =>
-			currentNote?.id === summary.id
-				? {
-						...currentNote,
-						title: summary.title,
-						fileName: summary.fileName,
-						updatedAt: summary.updatedAt,
-						isStarred: summary.isStarred,
-						tags: summary.tags,
-					}
-				: currentNote,
-		);
-	}, []);
-
-	const savePendingNow = useCallback(async () => {
-		const pending = pendingSaveRef.current;
-		if (!pending) {
-			return true;
+	const commitAccent = useCallback((value: string) => {
+		if (accentSaveTimerRef.current !== null) {
+			window.clearTimeout(accentSaveTimerRef.current);
 		}
 
-		pendingSaveRef.current = null;
-		clearSaveTimer();
-
-		try {
-			const summary = await saveNote(pending.id, pending.markdown);
-			applySavedSummary(summary);
-			setError(null);
-			return true;
-		} catch (saveError) {
-			if (!pendingSaveRef.current) {
-				pendingSaveRef.current = pending;
-			}
-			displayError(`Could not save note: ${messageFromError(saveError)}`);
-			return false;
-		}
-	}, [applySavedSummary, clearSaveTimer]);
-
-	const scheduleSave = useCallback(
-		(id: string, markdown: string) => {
-			pendingSaveRef.current = { id, markdown };
-			clearSaveTimer();
-			saveTimerRef.current = window.setTimeout(() => {
-				saveTimerRef.current = null;
-				void savePendingNow();
-			}, SAVE_DELAY_MS);
-		},
-		[clearSaveTimer, savePendingNow],
-	);
-
-	const loadNote = useCallback(
-		async (id: string) => {
-			if (activeNoteRef.current?.id === id) {
-				setIsSearchOpen(false);
-				return;
-			}
-
-			const saved = await savePendingNow();
-			if (!saved) {
-				return;
-			}
-
-			try {
-				const note = await readNote(id);
-				setActiveNote(note);
-				setNotes((currentNotes) =>
-					mergeNoteSummary(currentNotes, noteSummaryFromDocument(note)),
+		accentSaveTimerRef.current = window.setTimeout(() => {
+			accentSaveTimerRef.current = null;
+			setAccentColor(value)
+				.then(() => setSettingsError(null))
+				.catch((saveError) =>
+					setSettingsError(
+						`Could not save accent: ${messageFromError(saveError)}`,
+					),
 				);
-				setIsSearchOpen(false);
-				setSearchQuery("");
-				setError(null);
-				setShowNoteIndicator(true);
-				if (showNoteIndicatorTimeoutRef.current) {
-					clearTimeout(showNoteIndicatorTimeoutRef.current);
-				}
-				showNoteIndicatorTimeoutRef.current = setTimeout(() => {
-					setShowNoteIndicator(false);
-				}, 1000);
-			} catch (loadError) {
-				displayError(`Could not load note: ${messageFromError(loadError)}`);
+		}, 250);
+	}, []);
+
+	const onAccentChange = useCallback(
+		(value: string) => {
+			setAccent(value);
+			if (hexToRgbChannels(value)) {
+				applyAccent(value);
+				commitAccent(value);
 			}
 		},
-		[savePendingNow],
+		[commitAccent],
 	);
 
-	const createNewNote = useCallback(async () => {
-		const saved = await savePendingNow();
-		if (!saved) {
-			return;
-		}
-
-		try {
-			const note = await createNote();
-			setActiveNote(note);
-			setNotes((currentNotes) => [
-				noteSummaryFromDocument(note),
-				...currentNotes.filter((existing) => existing.id !== note.id),
-			]);
-			setIsSearchOpen(false);
-			setSearchQuery("");
-			setError(null);
-		} catch (createError) {
-			displayError(`Could not create note: ${messageFromError(createError)}`);
-		}
-	}, [savePendingNow]);
-
-	const deleteActiveNote = useCallback(async () => {
-		const current = activeNoteRef.current;
-		if (!current) {
-			return;
-		}
-
-		// Drop any queued autosave for this note first — otherwise the debounced write would
-		// recreate the file we are about to delete.
-		if (pendingSaveRef.current?.id === current.id) {
-			pendingSaveRef.current = null;
-		}
-		clearSaveTimer();
-
-		try {
-			await deleteNote(current.id);
-		} catch (deleteError) {
-			displayError(`Could not delete note: ${messageFromError(deleteError)}`);
-			return;
-		}
-
-		const remaining = notesRef.current.filter((note) => note.id !== current.id);
-		setNotes(remaining);
-
-		try {
-			const nextNote =
-				remaining.length > 0
-					? await readNote(remaining[0].id)
-					: await createNote();
-
-			setActiveNote(nextNote);
-			if (remaining.length === 0) {
-				setNotes([noteSummaryFromDocument(nextNote)]);
-			}
-			setError(null);
-		} catch (loadError) {
-			setActiveNote(null);
-			displayError(
-				`Could not open another note: ${messageFromError(loadError)}`,
-			);
-		}
-	}, [clearSaveTimer]);
-
-	const cycleNote = useCallback(
-		(direction: -1 | 1) => {
-			const currentNotes = notesRef.current;
-			const currentNote = activeNoteRef.current;
-			if (!currentNote || currentNotes.length < 2) {
-				return;
-			}
-
-			const activeIndex = currentNotes.findIndex(
-				(note) => note.id === currentNote.id,
-			);
-			if (activeIndex === -1) {
-				return;
-			}
-
-			const nextIndex =
-				(activeIndex + direction + currentNotes.length) % currentNotes.length;
-			void loadNote(currentNotes[nextIndex].id);
-		},
-		[loadNote],
-	);
-
-	const handleMarkdownChange = useCallback(
-		(noteId: string, markdown: string) => {
-			const title = titleFromMarkdown(markdown);
-			setActiveNote((currentNote) =>
-				currentNote?.id === noteId ? { ...currentNote, title } : currentNote,
-			);
-			setNotes((currentNotes) =>
-				currentNotes.map((note) =>
-					note.id === noteId ? { ...note, title } : note,
+	const onBackdropModeChange = useCallback((mode: BackdropMode) => {
+		setBackdropModeState(mode);
+		setBackdropMode(mode)
+			.then(() => setSettingsError(null))
+			.catch((saveError) =>
+				setSettingsError(
+					`Could not save backdrop: ${messageFromError(saveError)}`,
 				),
 			);
-			scheduleSave(noteId, markdown);
-		},
-		[scheduleSave],
-	);
-
-	useEffect(() => {
-		let disposed = false;
-
-		async function loadInitialNote() {
-			setIsLoading(true);
-			try {
-				const storedNotes = await listNotes();
-				const note =
-					storedNotes.length > 0
-						? await readNote(storedNotes[0].id)
-						: await createNote();
-
-				if (disposed) {
-					return;
-				}
-
-				setNotes(
-					storedNotes.length > 0
-						? storedNotes
-						: [noteSummaryFromDocument(note)],
-				);
-				setActiveNote(note);
-				setError(null);
-			} catch (loadError) {
-				if (!disposed) {
-					displayError(`Could not load notes: ${messageFromError(loadError)}`);
-				}
-			} finally {
-				if (!disposed) {
-					setIsLoading(false);
-				}
-			}
-		}
-
-		void loadInitialNote();
-
-		return () => {
-			disposed = true;
-		};
 	}, []);
 
-	useEffect(() => {
-		const handleBeforeUnload = () => {
-			const pending = pendingSaveRef.current;
-			if (pending) {
-				void saveNote(pending.id, pending.markdown);
-			}
-		};
-
-		window.addEventListener("beforeunload", handleBeforeUnload);
-		return () => {
-			window.removeEventListener("beforeunload", handleBeforeUnload);
-			clearSaveTimer();
-		};
-	}, [clearSaveTimer]);
+	const openInNoteSettings = useCallback(() => {
+		setIsSearchOpen(false);
+		setIsDeleteConfirmOpen(false);
+		setIsSettingsOpen(true);
+		setSettingsError(null);
+		void getSettings()
+			.then((settings) => {
+				setNotesDirectory(settings.notesDirectory);
+				setAccent(settings.accentColor);
+				setBackdropModeState(settings.backdropMode);
+			})
+			.catch((loadError) =>
+				setSettingsError(
+					`Could not load settings: ${messageFromError(loadError)}`,
+				),
+			);
+	}, []);
 
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
@@ -347,7 +135,7 @@ const FloatingNoteEditor = () => {
 			) {
 				event.preventDefault();
 				event.stopPropagation();
-				if (activeNoteRef.current) {
+				if (activeNote) {
 					setIsSearchOpen(false);
 					setIsDeleteConfirmOpen(true);
 				}
@@ -357,7 +145,7 @@ const FloatingNoteEditor = () => {
 			if (!event.altKey && event.key === ",") {
 				event.preventDefault();
 				event.stopPropagation();
-				void openSettings();
+				openInNoteSettings();
 				return;
 			}
 
@@ -365,6 +153,9 @@ const FloatingNoteEditor = () => {
 				event.preventDefault();
 				event.stopPropagation();
 				void createNewNote();
+				setIsSearchOpen(false);
+				setSearchQuery("");
+				showNoteIndicator();
 				return;
 			}
 
@@ -381,6 +172,7 @@ const FloatingNoteEditor = () => {
 				event.preventDefault();
 				event.stopPropagation();
 				cycleNote(-1);
+				showNoteIndicator();
 				return;
 			}
 
@@ -388,6 +180,8 @@ const FloatingNoteEditor = () => {
 				event.preventDefault();
 				event.stopPropagation();
 				cycleNote(1);
+				showNoteIndicator();
+				return;
 			}
 		};
 
@@ -395,7 +189,7 @@ const FloatingNoteEditor = () => {
 		return () => {
 			window.removeEventListener("keydown", handleKeyDown, { capture: true });
 		};
-	}, [createNewNote, cycleNote]);
+	}, [createNewNote, cycleNote, openInNoteSettings]);
 
 	useEffect(() => {
 		if (!isSearchOpen) {
@@ -425,6 +219,7 @@ const FloatingNoteEditor = () => {
 				event.preventDefault();
 				event.stopPropagation();
 				setIsDeleteConfirmOpen(false);
+
 				void deleteActiveNote();
 			}
 		};
@@ -437,20 +232,60 @@ const FloatingNoteEditor = () => {
 		};
 	}, [isDeleteConfirmOpen, deleteActiveNote]);
 
+	useEffect(() => {
+		if (!isSettingsOpen) {
+			return;
+		}
+
+		const handleSettingsKeys = (event: KeyboardEvent) => {
+			if (event.key === "Escape") {
+				event.preventDefault();
+				event.stopPropagation();
+				setIsSettingsOpen(false);
+			}
+		};
+
+		window.addEventListener("keydown", handleSettingsKeys, { capture: true });
+		return () => {
+			window.removeEventListener("keydown", handleSettingsKeys, {
+				capture: true,
+			});
+		};
+	}, [isSettingsOpen]);
+
+	useEffect(() => {
+		return () => {
+			if (accentSaveTimerRef.current !== null) {
+				window.clearTimeout(accentSaveTimerRef.current);
+			}
+		};
+	}, []);
+
 	const filteredNotes = useMemo(() => {
 		const query = searchQuery.trim().toLowerCase();
 		const source = query
 			? notes.filter((note) => note.title.toLowerCase().includes(query))
 			: notes;
 
-		return source.slice(0, SEARCH_RESULT_LIMIT);
+		return source;
 	}, [notes, searchQuery]);
+
+	const starredFilteredNotes = useMemo(
+		() => filteredNotes.filter((note) => note.isStarred),
+		[filteredNotes],
+	);
+	const unstarredFilteredNotes = useMemo(
+		() => filteredNotes.filter((note) => !note.isStarred),
+		[filteredNotes],
+	);
 
 	useEffect(() => {
 		setHighlightedIndex(0);
 	}, [filteredNotes.length, searchQuery]);
 
-	const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+	const handleSearchKeyDown = (
+		event: React.KeyboardEvent<HTMLInputElement>,
+	) => {
 		if (event.key === "Escape") {
 			event.preventDefault();
 			setIsSearchOpen(false);
@@ -480,72 +315,100 @@ const FloatingNoteEditor = () => {
 			const selectedNote = filteredNotes[highlightedIndex];
 			if (selectedNote) {
 				void loadNote(selectedNote.id);
+				setIsSearchOpen(false);
+				setSearchQuery("");
+				showNoteIndicator();
 			}
 		}
 	};
 
-	function displayError(error: string) {
-		setError(error);
-		setShowError(true);
-		if (errorTimeoutRef.current) {
-			clearTimeout(errorTimeoutRef.current);
+	useEffect(() => {
+		if (error) {
+			setShowError(true);
+			if (errorTimeoutRef.current) {
+				clearTimeout(errorTimeoutRef.current);
+			}
+			errorTimeoutRef.current = setTimeout(() => {
+				errorTimeoutRef.current = null;
+				setShowError(false);
+			}, 5000);
 		}
-		errorTimeoutRef.current = setTimeout(() => {
-			errorTimeoutRef.current = null;
-			setShowError(false);
-		}, 5000);
-	}
+	}, [error]);
 
-	const toggleStarNote = useCallback(async (noteId: string | undefined) => {
-		if (!noteId) {
-			return;
-		}
+	const toggleStarNote = useCallback(
+		async (noteId: string | undefined) => {
+			if (!noteId) {
+				return;
+			}
 
-		try {
-			await toggleStarNote(noteId);
-		} catch (error) {
-			displayError(`Could not toggle star: ${messageFromError(error)}`);
-		}
-	}, []);
+			const note = notes.find((item) => item.id === noteId);
+			if (!note) {
+				return;
+			}
+
+			try {
+				await updateNoteMetadata(noteId, { isStarred: !note.isStarred });
+			} catch (error) {
+				setError(`Could not toggle star: ${messageFromError(error)}`);
+			}
+		},
+		[notes, setError, updateNoteMetadata],
+	);
 
 	return (
-		<div id="floating-note-editor" className="border-4 border-accent/20">
-			<div
-				className="z-20 flex h-14 shrink-0 items-center justify-center border-b border-white/10 bg-white/04 cursor-grab bg-accent/2"
-				data-tauri-drag-region
+		<div
+			id="floating-note-editor"
+			className={cn(
+				"border-4 border-accent/20 transition-colors duration-300",
+				isFocused ? "border-accent/30" : "border-accent/5",
+			)}
+		>
+			<DragRegion
+				className={cn(
+					"note-navbar absolute inset-x-0 top-0 z-20 flex h-10 shrink-0 items-center justify-center border-b border-white/10 backdrop-blur-sm shadow-lg shadow-black/10",
+					isFocused ? "focused" : "unfocused",
+				)}
 				aria-label="Drag to move note"
 			>
-				<HStack fillWidth gap={4} x="around" y="middle" className="mx-4">
-					<Substack x="left">
-						<button
-							type="button"
-							onClick={() => void toggleStarNote(activeNote?.id)}
-						>
-							<StarIcon
-								strokeDasharray={activeNote?.isStarred ? "0" : "100"}
-								className={"w-4 h-4 text-white/55"}
-							/>
-						</button>
-						<div className="truncate text-left text-[12px] font-medium leading-none text-white/55">
-							{activeNote?.title ?? "Notes"}
-						</div>
-					</Substack>
+				<HStack fillWidth gap={4} x="between" y="middle" className="mx-4">
+					<div className="truncate text-left text-[12px] font-medium leading-none text-white/55">
+						{activeNote?.title ?? "Notes"}
+					</div>
 					<div
 						aria-hidden="true"
-						data-tauri-drag-region
-						className="h-1 w-10 rounded-full bg-white/25"
+						className="absolute left-1/2 -translate-x-1/2 h-1 w-10 rounded-full bg-white/25"
 					/>
-					<button
-						type="button"
-						onClick={() => void openSettings()}
-						aria-label="Open settings"
-						title="Settings (⌘,)"
-						className="h-7 w-7 rounded-md text-white/45 transition-colors hover:bg-white/10 hover:text-white/90"
-					>
-						<SettingsIcon className="w-4 h-4" />
-					</button>
+					<Substack x="left" fillWidth={false} gap={2}>
+						<IconButton
+							type="button"
+							onClick={() => void toggleStarNote(activeNote?.id)}
+							icon={
+								<StarIcon
+									strokeDasharray={activeNote?.isStarred ? "0" : "100"}
+									className={cn(
+										"w-4 h-4 text-white/55",
+										activeNote?.isStarred ? "text-accent" : "text-white/55",
+									)}
+								/>
+							}
+						/>
+						<IconButton
+							type="button"
+							onClick={openInNoteSettings}
+							aria-label="Open settings"
+							title="Settings (⌘,)"
+							icon={<SettingsIcon className="w-4 h-4" />}
+						/>
+						<IconButton
+							type="button"
+							onClick={closeNotepad}
+							aria-label="Close notepad"
+							title="Close notepad"
+							icon={<XIcon className="w-4 h-4" />}
+						/>
+					</Substack>
 				</HStack>
-			</div>
+			</DragRegion>
 			<HStack
 				className={cn(
 					"absolute inset-x-4 top-14 z-30 rounded-md border-2 border-error/85 bg-error/15 px-3 py-2 text-[12px] text-error transition-opacity duration-200",
@@ -553,7 +416,7 @@ const FloatingNoteEditor = () => {
 				)}
 			>
 				<AlertTriangleIcon className="w-4 h-4" />
-				<span className="text-error">{error}</span>
+				<span className="text-error">{cleanError}</span>
 			</HStack>
 			{isSearchOpen ? (
 				<div className="absolute inset-x-4 top-14 z-40 overflow-hidden rounded-lg border border-white/15 bg-neutral-950/10 backdrop-blur-2xl">
@@ -568,25 +431,69 @@ const FloatingNoteEditor = () => {
 					/>
 					<div className="max-h-72 overflow-y-auto py-1">
 						{filteredNotes.length > 0 ? (
-							filteredNotes.map((note, index) => (
-								<button
-									key={note.id}
-									type="button"
-									onMouseEnter={() => setHighlightedIndex(index)}
-									onClick={() => void loadNote(note.id)}
-									className={[
-										"flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors",
-										index === highlightedIndex
-											? "bg-accent/18 text-white"
-											: "text-white/72 hover:bg-white/10 hover:text-white",
-									].join(" ")}
-								>
-									<span className="min-w-0 flex-1 truncate">{note.title}</span>
-									{note.id === activeNote?.id ? (
-										<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-									) : null}
-								</button>
-							))
+							<>
+								{starredFilteredNotes.length > 0
+									? starredFilteredNotes.map((note) => {
+											const noteIndex = filteredNotes.findIndex(
+												(item) => item.id === note.id,
+											);
+											return (
+												<button
+													key={note.id}
+													type="button"
+													onMouseEnter={() => setHighlightedIndex(noteIndex)}
+													onClick={() => {
+														void loadNote(note.id);
+														showNoteIndicator();
+													}}
+													className={[
+														"flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors",
+														noteIndex === highlightedIndex
+															? "bg-accent/18 text-white"
+															: "text-white/72 hover:bg-white/10 hover:text-white",
+													].join(" ")}
+												>
+													<span className="min-w-0 flex-1 truncate">
+														{note.title}
+													</span>
+													<StarIcon className="h-3.5 w-3.5 shrink-0 text-accent" />
+												</button>
+											);
+										})
+									: null}
+
+								{unstarredFilteredNotes.length > 0
+									? unstarredFilteredNotes.map((note) => {
+											const noteIndex = filteredNotes.findIndex(
+												(item) => item.id === note.id,
+											);
+											return (
+												<button
+													key={note.id}
+													type="button"
+													onMouseEnter={() => setHighlightedIndex(noteIndex)}
+													onClick={() => {
+														void loadNote(note.id);
+														showNoteIndicator();
+													}}
+													className={[
+														"flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors",
+														noteIndex === highlightedIndex
+															? "bg-accent/18 text-white"
+															: "text-white/72 hover:bg-white/10 hover:text-white",
+													].join(" ")}
+												>
+													<span className="min-w-0 flex-1 truncate">
+														{note.title}
+													</span>
+													{note.id === activeNote?.id ? (
+														<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+													) : null}
+												</button>
+											);
+										})
+									: null}
+							</>
 						) : (
 							<div className="px-4 py-5 text-center text-[13px] text-white/45">
 								No matching notes
@@ -634,6 +541,117 @@ const FloatingNoteEditor = () => {
 					</div>
 				</div>
 			) : null}
+			{isSettingsOpen ? (
+				<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
+					<div className="w-full max-w-[560px] overflow-hidden rounded-xl border border-white/15 bg-neutral-950/85 shadow shadow-black backdrop-blur-2xl">
+						<div className="flex items-start justify-between border-b border-white/10 px-5 pt-4 pb-3">
+							<div>
+								<div className="text-[15px] font-semibold text-white">
+									Settings
+								</div>
+								<div className="mt-0.5 text-[12px] text-white/45">
+									Preferences for this notepad view.
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={() => setIsSettingsOpen(false)}
+								className="rounded-md px-2 py-1 text-[12px] text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+							>
+								Close
+							</button>
+						</div>
+						<div className="max-h-[70vh] overflow-y-auto px-5 py-4">
+							{settingsError ? (
+								<div className="mb-4 rounded-md border border-accent/35 bg-accent/12 px-3 py-2 text-[12px] text-white/80">
+									{settingsError}
+								</div>
+							) : null}
+							<div className="flex flex-col gap-5">
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
+										Notes folder
+									</span>
+									<div className="flex items-center gap-2">
+										<code className="min-w-0 flex-1 truncate rounded-md border border-white/10 bg-white/4 px-3 py-2 text-[12px] text-white/60">
+											{notesDirectory || "Loading..."}
+										</code>
+										<button
+											type="button"
+											onClick={() =>
+												void revealNotesDirectory().catch((e) =>
+													setSettingsError(
+														`Could not open folder: ${messageFromError(e)}`,
+													),
+												)
+											}
+											className="shrink-0 rounded-md border border-white/15 bg-white/6 px-3 py-2 text-[12px] text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+										>
+											Reveal
+										</button>
+									</div>
+								</section>
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
+										Notepad backdrop
+									</span>
+									<div className="flex gap-2">
+										<button
+											type="button"
+											aria-pressed={backdropMode === "glass"}
+											onClick={() => onBackdropModeChange("glass")}
+											className={cn(
+												"rounded-md border px-3 py-2 text-[12px] transition-colors",
+												backdropMode === "glass"
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white",
+											)}
+										>
+											Liquid glass
+										</button>
+										<button
+											type="button"
+											aria-pressed={backdropMode === "blur"}
+											onClick={() => onBackdropModeChange("blur")}
+											className={cn(
+												"rounded-md border px-3 py-2 text-[12px] transition-colors",
+												backdropMode === "blur"
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white",
+											)}
+										>
+											High blur
+										</button>
+									</div>
+								</section>
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
+										Accent color
+									</span>
+									<div className="flex items-center gap-3">
+										<input
+											type="color"
+											value={accent}
+											onChange={(event) => onAccentChange(event.target.value)}
+											aria-label="Accent color"
+											className="h-9 w-12 cursor-pointer rounded-md border border-white/15 bg-transparent"
+										/>
+										<input
+											type="text"
+											value={accent}
+											spellCheck={false}
+											onChange={(event) => onAccentChange(event.target.value)}
+											aria-label="Accent color hex"
+											className="w-28 rounded-md border border-white/15 bg-white/4 px-3 py-2 text-[13px] uppercase text-white outline-none focus:border-accent/60"
+										/>
+									</div>
+								</section>
+							</div>
+						</div>
+					</div>
+				</div>
+			) : null}
+
 			{isLoading ? (
 				<div className="note-content">Loading notes</div>
 			) : activeNote ? (
@@ -648,8 +666,8 @@ const FloatingNoteEditor = () => {
 			)}
 			<div
 				className={cn(
-					"absolute bottom-4 right-1/2 translate-x-1/2 px-2 py-1 border border-accent/35 rounded-full flex items-center gap-1 justify-center transition-all duration-300",
-					showNoteIndicator ? "opacity-100" : "opacity-0",
+					"absolute bottom-4 right-1/2 translate-x-1/2 px-2 py-1 rounded-full flex items-center gap-1 justify-center transition-all duration-300 backdrop-blur-lg bg-accent/5",
+					shouldShowNoteIndicator ? "opacity-100" : "opacity-0",
 				)}
 			>
 				{notes.map((note) => (

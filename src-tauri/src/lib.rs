@@ -526,6 +526,7 @@ pub fn run() {
         notepad::save_note,
         notepad::update_note,
         notepad::delete_note,
+        notepad::close_notepad_command,
         settings::get_settings,
         settings::set_accent_color,
         settings::set_backdrop_mode,

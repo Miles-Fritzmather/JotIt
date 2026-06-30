@@ -402,3 +402,21 @@ export const Grid = forwardRef<HTMLDivElement, GridProps>(
 		);
 	},
 );
+
+
+/** Window drag handle — set once on a header; layout children stay clickable via CSS. */
+export const DragRegion = forwardRef<
+	HTMLDivElement,
+	React.HTMLAttributes<HTMLDivElement>
+>(({ className, children, ...props }, ref) => (
+	<div
+		ref={ref}
+		data-tauri-drag-region
+		className={cn("drag-region cursor-grab active:cursor-grabbing", className)}
+		{...props}
+	>
+		{children}
+	</div>
+));
+
+DragRegion.displayName = "DragRegion";

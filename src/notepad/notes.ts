@@ -1,13 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export interface NoteSummary {
+export type NoteSummary = {
 	id: string;
 	title: string;
 	fileName: string;
 	updatedAt: number;
+} & NoteMetadata;
+
+export type NoteMetadata = {
 	isStarred: boolean;
 	tags: string[];
-}
+};
 
 export interface NoteDocument extends NoteSummary {
 	markdown: string;

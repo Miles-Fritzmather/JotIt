@@ -494,6 +494,15 @@ fn toggle_notepad<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+pub fn close_notepad_command<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(LABEL) {
+        close_notepad(&app, &win)
+    } else {
+        Ok(())
+    }
+}
+
 fn close_notepad<R: Runtime>(
     app: &AppHandle<R>,
     win: &tauri::WebviewWindow<R>,
