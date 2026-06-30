@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+export type BackdropMode = "glass" | "blur";
+
 export interface AppSettings {
 	accentColor: string;
+	backdropMode: BackdropMode;
 	notesDirectory: string;
 }
 
@@ -14,6 +17,10 @@ export function getSettings() {
 
 export function setAccentColor(color: string) {
 	return invoke<void>("set_accent_color", { color });
+}
+
+export function setBackdropMode(backdropMode: BackdropMode) {
+	return invoke<void>("set_backdrop_mode", { backdropMode });
 }
 
 export function revealNotesDirectory() {

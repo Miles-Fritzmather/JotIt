@@ -481,7 +481,11 @@ pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 fn toggle_notepad<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     if let Some(win) = app.get_webview_window(LABEL) {
         if crate::is_notepad_overlay_visible(&win) {
-            close_notepad(app, &win)
+            if crate::is_notepad_key_window(&win) {
+                close_notepad(app, &win)
+            } else {
+                show_notepad(app, &win)
+            }
         } else {
             show_notepad(app, &win)
         }
@@ -626,7 +630,9 @@ pub fn build_notepad_window<R: Runtime>(
 
     let win = builder.build().map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
-    crate::apply_notepad_vibrancy(&win)?;
+    if let Err(error) = crate::apply_notepad_vibrancy(app, &win) {
+        eprintln!("floating-note backdrop: {error}");
+    }
     register_window_geometry_persistence(app, &win);
     Ok(win)
 }

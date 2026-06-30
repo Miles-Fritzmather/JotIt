@@ -15,16 +15,32 @@ const SETTINGS_LABEL: &str = "main";
 /// Emitted to every webview when the accent changes so each window restyles live.
 pub const ACCENT_CHANGED_EVENT: &str = "settings://accent-changed";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BackdropMode {
+    Glass,
+    Blur,
+}
+
+impl Default for BackdropMode {
+    fn default() -> Self {
+        Self::Glass
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredSettings {
     accent_color: String,
+    #[serde(default)]
+    backdrop_mode: BackdropMode,
 }
 
 impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             accent_color: DEFAULT_ACCENT.to_string(),
+            backdrop_mode: BackdropMode::default(),
         }
     }
 }
@@ -34,6 +50,7 @@ impl Default for StoredSettings {
 #[serde(rename_all = "camelCase")]
 pub struct SettingsView {
     accent_color: String,
+    backdrop_mode: BackdropMode,
     notes_directory: String,
 }
 
@@ -62,6 +79,10 @@ fn save_settings<R: Runtime>(app: &AppHandle<R>, settings: &StoredSettings) -> R
     fs::write(path, contents).map_err(|e| e.to_string())
 }
 
+pub(crate) fn backdrop_mode<R: Runtime>(app: &AppHandle<R>) -> BackdropMode {
+    load_settings(app).backdrop_mode
+}
+
 /// Accept `#rgb` / `#rrggbb` only — the value is interpolated straight into CSS in the frontend.
 fn is_valid_hex_color(value: &str) -> bool {
     let Some(hex) = value.strip_prefix('#') else {
@@ -78,6 +99,7 @@ pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Result<SettingsView, Strin
         .into_owned();
     Ok(SettingsView {
         accent_color: stored.accent_color,
+        backdrop_mode: stored.backdrop_mode,
         notes_directory,
     })
 }
@@ -88,14 +110,27 @@ pub fn set_accent_color<R: Runtime>(app: AppHandle<R>, color: String) -> Result<
         return Err(format!("Invalid hex color: {color}"));
     }
 
-    save_settings(
-        &app,
-        &StoredSettings {
-            accent_color: color.clone(),
-        },
-    )?;
+    let mut stored = load_settings(&app);
+    stored.accent_color = color.clone();
+    save_settings(&app, &stored)?;
     app.emit(ACCENT_CHANGED_EVENT, color)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_backdrop_mode<R: Runtime>(
+    app: AppHandle<R>,
+    backdrop_mode: BackdropMode,
+) -> Result<(), String> {
+    let mut stored = load_settings(&app);
+    stored.backdrop_mode = backdrop_mode;
+    save_settings(&app, &stored)?;
+
+    if let Err(error) = crate::refresh_notepad_backdrop(&app) {
+        eprintln!("floating-note backdrop refresh: {error}");
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

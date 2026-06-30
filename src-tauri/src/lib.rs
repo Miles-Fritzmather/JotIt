@@ -2,6 +2,8 @@
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod notepad;
+
+use tauri::Manager;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod settings;
 
@@ -59,35 +61,40 @@ pub(crate) fn apply_notepad_overlay<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Attach the native glass backdrop behind the (transparent) webview.
+/// Attach the native backdrop behind the (transparent) webview.
 ///
-/// On macOS 26 (Tahoe) and later this inserts an `NSGlassEffectView` — Apple's real "Liquid Glass"
-/// material — directly behind the webview, mirroring the approach of
-/// `hkandala/tauri-plugin-liquid-glass`. On older systems the class does not exist, so we fall back
-/// to a pinned `NSVisualEffectView` blur.
+/// Mode comes from [`settings::backdrop_mode`]: Liquid Glass (`NSGlassEffectView` on macOS 26+,
+/// with blur fallback on older systems) or a pinned `NSVisualEffectView` blur at
+/// [`NSVisualEffectState::Active`] so the panel keeps the same appearance when it is not the key
+/// window.
 ///
-/// The fallback blur is pinned to [`NSVisualEffectState::Active`] so macOS never drops it back to
-/// the inactive/clear appearance when the panel is not the key window — that focus-follows behavior
-/// is the reason a CSS `backdrop-filter` blur visibly disappears after a few idle seconds. This is
-/// applied once at window creation; reclassing to `NSPanel` later does not disturb the subview.
+/// Applied at window creation and when the user changes the setting; reclassing to `NSPanel` later
+/// does not disturb the subview.
 #[cfg(target_os = "macos")]
 pub(crate) fn apply_notepad_vibrancy<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
 ) -> Result<(), String> {
-    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+    let mode = settings::backdrop_mode(app);
+    macos::apply_backdrop(window, mode).map_err(|e| e.to_string())
+}
 
-    // Prefer real Liquid Glass when the OS provides it; otherwise fall through to the blur.
-    if macos::apply_liquid_glass(window).map_err(|e| e.to_string())? {
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn apply_notepad_vibrancy<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) fn refresh_notepad_backdrop<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    let Some(win) = app.get_webview_window(notepad::LABEL) else {
         return Ok(());
-    }
-
-    apply_vibrancy(
-        window,
-        NSVisualEffectMaterial::HudWindow,
-        Some(NSVisualEffectState::Active),
-        Some(1.0),
-    )
-    .map_err(|e| e.to_string())
+    };
+    apply_notepad_vibrancy(app, &win)
 }
 
 /// Re-run after [`WebviewWindow::show`] — some Cocoa paths adjust level/order on display.
@@ -113,6 +120,20 @@ pub(crate) fn is_notepad_overlay_visible<R: tauri::Runtime>(
     #[cfg(not(target_os = "macos"))]
     {
         window.is_visible().unwrap_or(false)
+    }
+}
+
+pub(crate) fn is_notepad_key_window<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return macos::is_window_key(window).unwrap_or(false);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.is_focused().unwrap_or(false)
     }
 }
 
@@ -165,6 +186,9 @@ pub(crate) fn deactivate_app_shell() {
 mod macos {
     use std::sync::atomic::{AtomicI32, Ordering};
 
+    use crate::settings::BackdropMode;
+    use objc2::runtime::NSObjectProtocol;
+
     use objc2::{
         msg_send,
         runtime::{AnyClass, AnyObject},
@@ -201,6 +225,67 @@ mod macos {
     /// `NSWindowOrderingMode::Below` — keep the glass at the very back, under the webview.
     const NS_WINDOW_BELOW: isize = -1;
 
+    pub(super) fn apply_backdrop<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+        mode: BackdropMode,
+    ) -> tauri::Result<()> {
+        clear_backdrop_views(window)?;
+        match mode {
+            BackdropMode::Glass => {
+                if apply_liquid_glass(window)? {
+                    Ok(())
+                } else {
+                    apply_blur_backdrop(window)
+                }
+            }
+            BackdropMode::Blur => apply_blur_backdrop(window),
+        }
+    }
+
+    pub(super) fn clear_backdrop_views<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<()> {
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let ns_window = unsafe { &*ptr };
+        let Some(content_view) = ns_window.contentView() else {
+            return Ok(());
+        };
+
+        let glass_class = AnyClass::get(c"NSGlassEffectView");
+        let vibrancy_class = AnyClass::get(c"NSVisualEffectView");
+        let subviews = content_view.subviews();
+        let mut to_remove = Vec::new();
+
+        for subview in subviews.iter() {
+            let is_backdrop = [glass_class, vibrancy_class].into_iter().flatten().any(|class| {
+                subview.isKindOfClass(class)
+            });
+            if is_backdrop {
+                to_remove.push(subview.clone());
+            }
+        }
+
+        for subview in to_remove {
+            subview.removeFromSuperview();
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn apply_blur_backdrop<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<()> {
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+
+        apply_vibrancy(
+            window,
+            NSVisualEffectMaterial::HudWindow,
+            Some(NSVisualEffectState::Active),
+            Some(1.0),
+        )
+        .map_err(|e| tauri::Error::from(std::io::Error::other(e.to_string())))
+    }
+
     /// Insert an `NSGlassEffectView` (macOS 26+ "Liquid Glass") behind the transparent webview.
     ///
     /// Returns `Ok(false)` when the class is unavailable (pre-Tahoe) so the caller can fall back to
@@ -220,10 +305,6 @@ mod macos {
         };
         let bounds = content_view.bounds();
 
-        // A very light tint lives *inside* the glass (refracted by it) rather than as a flat CSS
-        // film on top, so the material still reads as real Liquid Glass. Keep alpha low — Apple's
-        // own glass uses little to no tint; this is just enough to bias it slightly dark for white
-        // text legibility. Raise alpha for a moodier/darker glass, drop to 0.0 (or remove) for clear.
         let tint = NSColor::colorWithSRGBRed_green_blue_alpha(0.1, 0.0, 0.0, 0.00);
 
         unsafe {
@@ -263,7 +344,6 @@ mod macos {
             let _: () = msg_send![glass, _setVariant: variant];
         }
     }
-
     static LAST_FRONTMOST_APP_PID: AtomicI32 = AtomicI32::new(0);
 
     /// Collection behavior for a HUD that should be able to appear while *other* apps are
@@ -347,6 +427,14 @@ mod macos {
         let ptr = window.ns_window()? as *mut NSWindow;
         let w = unsafe { &*ptr };
         Ok(w.isVisible())
+    }
+
+    pub(super) fn is_window_key<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> tauri::Result<bool> {
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let w = unsafe { &*ptr };
+        Ok(w.isKeyWindow())
     }
 
     pub(super) fn hide_window<R: tauri::Runtime>(
@@ -440,6 +528,7 @@ pub fn run() {
         notepad::delete_note,
         settings::get_settings,
         settings::set_accent_color,
+        settings::set_backdrop_mode,
         settings::reveal_notes_directory,
         settings::open_settings
     ]);

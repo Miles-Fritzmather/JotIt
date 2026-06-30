@@ -1,9 +1,8 @@
 /*
-The backdrop is a native macOS Liquid Glass view (NSGlassEffectView, falling back to
-NSVisualEffectView pre-Tahoe) applied in apply_notepad_vibrancy — not a CSS backdrop-filter —
-so it persists when the panel is not focused. The shell is kept TRANSPARENT (no bg-*): the
-darkening tint now lives inside the native glass, so any CSS fill here would just flatten the
-glass back into a solid film. Keep this background-free.
+The backdrop is a native macOS material (NSGlassEffectView "Liquid glass" or NSVisualEffectView
+"High blur", user-selectable in Settings) applied in apply_notepad_vibrancy — not a CSS
+backdrop-filter — so it keeps the same look when the panel is not focused. The shell is kept
+TRANSPARENT (no bg-*): any CSS fill here would flatten the native material into a solid film.
 */
 
 html,

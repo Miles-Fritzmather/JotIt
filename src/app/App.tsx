@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	applyAccent,
+	type BackdropMode,
 	getSettings,
 	hexToRgbChannels,
 	revealNotesDirectory,
 	setAccentColor,
+	setBackdropMode,
 } from "../theme";
 import "./App.css";
 
@@ -15,6 +17,7 @@ function messageFromError(error: unknown) {
 function App() {
 	const [notesDirectory, setNotesDirectory] = useState("");
 	const [accent, setAccent] = useState("#ff6363");
+	const [backdropMode, setBackdropModeState] = useState<BackdropMode>("glass");
 	const [error, setError] = useState<string | null>(null);
 	const saveTimerRef = useRef<number | null>(null);
 
@@ -27,6 +30,7 @@ function App() {
 				}
 				setNotesDirectory(settings.notesDirectory);
 				setAccent(settings.accentColor);
+				setBackdropModeState(settings.backdropMode);
 			})
 			.catch((loadError) => {
 				if (active) {
@@ -70,6 +74,15 @@ function App() {
 		[commitAccent],
 	);
 
+	const onBackdropModeChange = useCallback((mode: BackdropMode) => {
+		setBackdropModeState(mode);
+		setBackdropMode(mode)
+			.then(() => setError(null))
+			.catch((saveError) =>
+				setError(`Could not save backdrop: ${messageFromError(saveError)}`),
+			);
+	}, []);
+
 	return (
 		<main className="flex min-h-screen w-screen flex-col gap-6 bg-neutral-950 px-7 py-6 font-sans text-white antialiased">
 			<header>
@@ -109,6 +122,41 @@ function App() {
 				</div>
 				<p className="text-[12px] text-white/35">
 					Every note is saved here as a Markdown file.
+				</p>
+			</section>
+
+			<section className="flex flex-col gap-2">
+				<span className="text-[13px] font-medium text-white/80">
+					Notepad backdrop
+				</span>
+				<div className="flex gap-2">
+					<button
+						type="button"
+						aria-pressed={backdropMode === "glass"}
+						onClick={() => onBackdropModeChange("glass")}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							backdropMode === "glass"
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						Liquid glass
+					</button>
+					<button
+						type="button"
+						aria-pressed={backdropMode === "blur"}
+						onClick={() => onBackdropModeChange("blur")}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							backdropMode === "blur"
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						High blur
+					</button>
+				</div>
+				<p className="text-[12px] text-white/35">
+					Applies to the floating notepad immediately.
 				</p>
 			</section>
 
