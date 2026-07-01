@@ -6,8 +6,9 @@ import {
 	hexToRgbChannels,
 	revealNotesDirectory,
 	setAccentColor,
-	setBackdropMode,
+	setPasteWithFormatting,
 } from "../theme";
+import { pickAndImportMarkdownFiles } from "../notepad/notes";
 import "./App.css";
 
 function messageFromError(error: unknown) {
@@ -17,7 +18,8 @@ function messageFromError(error: unknown) {
 function App() {
 	const [notesDirectory, setNotesDirectory] = useState("");
 	const [accent, setAccent] = useState("#ff6363");
-	const [backdropMode, setBackdropModeState] = useState<BackdropMode>("glass");
+	const [, setBackdropModeState] = useState<BackdropMode>("glass");
+	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const saveTimerRef = useRef<number | null>(null);
 
@@ -31,6 +33,7 @@ function App() {
 				setNotesDirectory(settings.notesDirectory);
 				setAccent(settings.accentColor);
 				setBackdropModeState(settings.backdropMode);
+				setPasteWithFormattingState(settings.pasteWithFormatting);
 			})
 			.catch((loadError) => {
 				if (active) {
@@ -74,12 +77,14 @@ function App() {
 		[commitAccent],
 	);
 
-	const onBackdropModeChange = useCallback((mode: BackdropMode) => {
-		setBackdropModeState(mode);
-		setBackdropMode(mode)
+	const onPasteWithFormattingChange = useCallback((enabled: boolean) => {
+		setPasteWithFormattingState(enabled);
+		void setPasteWithFormatting(enabled)
 			.then(() => setError(null))
 			.catch((saveError) =>
-				setError(`Could not save backdrop: ${messageFromError(saveError)}`),
+				setError(
+					`Could not save paste setting: ${messageFromError(saveError)}`,
+				),
 			);
 	}, []);
 
@@ -117,7 +122,7 @@ function App() {
 						}
 						className="shrink-0 rounded-md border border-white/15 bg-white/6 px-3 py-2 text-[12px] text-white/80 transition-colors hover:bg-white/12 hover:text-white"
 					>
-						Reveal
+						Open
 					</button>
 				</div>
 				<p className="text-[12px] text-white/35">
@@ -126,37 +131,55 @@ function App() {
 			</section>
 
 			<section className="flex flex-col gap-2">
-				<span className="text-[13px] font-medium text-white/80">
-					Notepad backdrop
-				</span>
+				<span className="text-[13px] font-medium text-white/80">Import</span>
+				<button
+					type="button"
+					onClick={() =>
+						void pickAndImportMarkdownFiles().catch((importError) =>
+							setError(
+								`Could not import files: ${messageFromError(importError)}`,
+							),
+						)
+					}
+					className="w-fit rounded-md border border-white/15 bg-white/6 px-3 py-2 text-[12px] text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+				>
+					Import markdown files
+				</button>
+				<p className="text-[12px] text-white/35">
+					Copy .md, .markdown, or .txt files into your notes folder.
+				</p>
+			</section>
+
+			<section className="flex flex-col gap-2">
+				<span className="text-[13px] font-medium text-white/80">Paste</span>
 				<div className="flex gap-2">
 					<button
 						type="button"
-						aria-pressed={backdropMode === "glass"}
-						onClick={() => onBackdropModeChange("glass")}
+						aria-pressed={pasteWithFormatting}
+						onClick={() => onPasteWithFormattingChange(true)}
 						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
-							backdropMode === "glass"
+							pasteWithFormatting
 								? "border-accent/50 bg-accent/16 text-white"
 								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
 						}`}
 					>
-						Liquid glass
+						Formatted
 					</button>
 					<button
 						type="button"
-						aria-pressed={backdropMode === "blur"}
-						onClick={() => onBackdropModeChange("blur")}
+						aria-pressed={!pasteWithFormatting}
+						onClick={() => onPasteWithFormattingChange(false)}
 						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
-							backdropMode === "blur"
+							!pasteWithFormatting
 								? "border-accent/50 bg-accent/16 text-white"
 								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
 						}`}
 					>
-						High blur
+						Plain text
 					</button>
 				</div>
 				<p className="text-[12px] text-white/35">
-					Applies to the floating notepad immediately.
+					⌘⇧V pastes using the other mode
 				</p>
 			</section>
 
@@ -178,7 +201,7 @@ function App() {
 						spellCheck={false}
 						onChange={(event) => onAccentChange(event.target.value)}
 						aria-label="Accent color hex"
-						className="w-28 rounded-md border border-white/15 bg-white/4 px-3 py-2 text-[13px] uppercase text-white outline-none focus:border-accent/6"
+						className="rounded-md border border-white/15 bg-white/4 px-3 py-2 text-[13px] uppercase text-white outline-none focus:border-accent/60"
 					/>
 					<span
 						aria-hidden="true"

@@ -17,6 +17,7 @@ import {
 	NoteMetadata,
 	NoteSummary,
 	noteSummaryFromDocument,
+	pickAndImportMarkdownFiles,
 	readNote,
 	updateNote,
 	saveNote,
@@ -33,6 +34,7 @@ type NotesContextType = {
 	cycleNote: (direction: -1 | 1) => void;
 	createNewNote: () => void;
 	deleteActiveNote: () => void;
+	importMarkdownFiles: () => Promise<void>;
 	loadNote: (id: string) => void;
 	handleMarkdownChange: (noteId: string, markdown: string) => void;
 	savePendingNow: () => Promise<boolean>;
@@ -312,6 +314,21 @@ const NotesProvider = ({
 		}
 	}, [clearSaveTimer]);
 
+	const importMarkdownFiles = useCallback(async () => {
+		const saved = await savePendingNow();
+		if (!saved) return;
+		try {
+			const imported = await pickAndImportMarkdownFiles();
+			if (imported.length === 0) return;
+			const storedNotes = await listNotes();
+			setNotes(storedNotes);
+			await loadNote(imported[0].id);
+			setError(null);
+		} catch (importError) {
+			setError(`Could not import files: ${messageFromError(importError)}`);
+		}
+	}, [loadNote, savePendingNow, setError]);
+
 	const updateNoteMetadata = useCallback(
 		async (noteId: string, metadata: Partial<NoteMetadata>) => {
 			const existing = notesRef.current.find((note) => note.id === noteId);
@@ -376,6 +393,7 @@ const NotesProvider = ({
 			cycleNote,
 			createNewNote,
 			deleteActiveNote,
+			importMarkdownFiles,
 			loadNote,
 			handleMarkdownChange,
 			savePendingNow,

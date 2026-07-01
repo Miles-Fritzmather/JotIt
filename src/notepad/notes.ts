@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 
 export type NoteSummary = {
 	id: string;
@@ -66,6 +67,28 @@ export function saveNote(id: string, markdown: string) {
 
 export function deleteNote(id: string) {
 	return invoke<void>("delete_note", { id });
+}
+
+export function shareNote(id: string, anchorX: number, anchorY: number) {
+	return invoke<void>("share_note", { id, anchorX, anchorY });
+}
+
+export function importMarkdownFiles(paths: string[]) {
+	return invoke<NoteSummary[]>("import_markdown_files", { paths });
+}
+
+export async function pickAndImportMarkdownFiles() {
+	const selected = await open({
+		multiple: true,
+		filters: [
+			{ name: "Markdown", extensions: ["md", "markdown", "txt"] },
+		],
+	});
+	if (!selected) {
+		return [];
+	}
+	const paths = Array.isArray(selected) ? selected : [selected];
+	return importMarkdownFiles(paths);
 }
 
 function normalizeTitle(value: string) {

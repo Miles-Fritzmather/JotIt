@@ -93,6 +93,7 @@ body,
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
+	zoom: var(--editor-zoom, 1);
 }
 
 #floating-note-editor [data-milkdown-root] {
@@ -126,8 +127,8 @@ body,
 	--crepe-color-primary: var(--color-accent);
 	--crepe-color-secondary: rgb(255 255 255 / 0.16);
 	--crepe-color-selected: var(--color-accent);
-	--crepe-color-surface-low: rgb(255 255 255 / 0.1);
-	--crepe-color-surface: rgb(20 23 28 / 0.72);
+	--crepe-color-surface-low: rgb(255 255 255 / 0.05);
+	--crepe-color-surface: rgb(255 255 255 / 0.06);
 	--crepe-font-code: ui-monospace;
 	--crepe-font-default: system-ui;
 	--crepe-font-title: system-ui;
@@ -189,8 +190,15 @@ body,
 	font-size: 13px !important;
 	line-height: 1.45 !important;
 	color: rgba(255, 255, 255, 0.95) !important;
-	caret-color: #fff;
 	outline: none;
+}
+
+#floating-note-editor .ProseMirror:not(.virtual-cursor-enabled) {
+	caret-color: var(--color-accent);
+}
+
+#floating-note-editor .ProseMirror.virtual-cursor-enabled {
+	caret-color: transparent !important;
 }
 
 #floating-note-editor .ProseMirror p {
@@ -250,35 +258,53 @@ body,
 }
 
 #floating-note-editor .ProseMirror blockquote {
-	margin-top: 0.375rem !important;
-	margin-bottom: 0.375rem !important;
-	border-left: 2px solid rgba(255, 255, 255, 0.3) !important;
-	padding-top: 0.125rem !important;
-	padding-bottom: 0.125rem !important;
-	padding-left: 0.625rem !important;
-	color: rgba(255, 255, 255, 0.7) !important;
+	margin: 0.5rem 0 !important;
+	border: none !important;
+	border-left: 3px solid var(--color-accent) !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	padding: 0.125rem 0 0.125rem 0.875rem !important;
+	color: rgb(255 255 255 / 0.72) !important;
+	font-style: italic;
+}
+
+#floating-note-editor .ProseMirror blockquote::before {
+	display: none !important;
+	content: none !important;
 }
 
 #floating-note-editor .ProseMirror a {
-	color: rgb(186 230 253) !important;
-	text-decoration-color: rgba(186, 230, 253, 0.6) !important;
+	color: var(--color-accent) !important;
+	font-weight: 700 !important;
+	text-decoration: underline;
+	text-decoration-color: color-mix(
+		in srgb,
+		var(--color-accent) 55%,
+		transparent
+	);
+	text-underline-offset: 2px;
+	cursor: pointer;
 }
 
-#floating-note-editor .ProseMirror code {
-	border-radius: 0.25rem !important;
-	background: rgba(0, 0, 0, 0.25) !important;
+#floating-note-editor .ProseMirror a:hover {
+	text-decoration-color: var(--color-accent);
 }
 
-#floating-note-editor .ProseMirror pre {
-	border-radius: 0.375rem !important;
-	background: rgba(0, 0, 0, 0.25) !important;
-	padding: 0.75rem !important;
+#floating-note-editor .ProseMirror :not(pre) > code {
+	border: 1px solid rgb(255 255 255 / 0.1) !important;
+	border-radius: 0.3rem !important;
+	background: rgb(255 255 255 / 0.06) !important;
+	padding: 0.1rem 0.35rem !important;
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+	font-size: 0.85em !important;
+	color: rgb(255 255 255 / 0.88) !important;
 }
 
 #floating-note-editor .ProseMirror ul,
 #floating-note-editor .ProseMirror ol {
-	margin-top: 0.25rem;
-	margin-bottom: 0.25rem;
+	margin-top: 0.3rem;
+	margin-bottom: 0.3rem;
 }
 
 #floating-note-editor .milkdown-list-item-block {
@@ -301,33 +327,181 @@ body,
 
 #floating-note-editor .milkdown-list-item-block li .label-wrapper {
 	display: flex;
-	height: 21px;
-	width: 1rem;
-	align-items: flex-start;
-	justify-content: flex-end;
-	padding-top: 2px;
+	height: 24px;
+	width: 18px;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: center;
+	padding-top: 0;
 }
 
 #floating-note-editor .milkdown-list-item-block li .label-wrapper .label {
-	height: 19px;
-	width: 1rem;
+	display: flex;
+	height: 24px;
+	width: 100px;
+	align-items: center;
+	justify-content: center;
 	padding: 0;
-	text-align: right;
-	font-size: 13px;
-	line-height: 19px;
 }
 
-#floating-note-editor .milkdown-code-block,
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.bullet
+	svg,
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.checked
+	svg,
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.unchecked
+	svg {
+	width: 14px !important;
+	height: 14px !important;
+	transform: none;
+	transform-origin: center;
+}
+
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.bullet
+	svg {
+	fill: var(--color-accent);
+	color: var(--color-accent);
+}
+
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.checked
+	svg,
+#floating-note-editor
+	.milkdown-list-item-block
+	li
+	.label-wrapper
+	.label.unchecked
+	svg {
+	fill: var(--color-accent);
+	color: var(--color-accent);
+}
+
+#floating-note-editor
+	.milkdown-list-item-block
+	li:has(> .label-wrapper > .label.checked)
+	> .children
+	> p {
+	text-decoration: line-through !important;
+	text-decoration-color: rgb(255 255 255 / 0.45) !important;
+	text-decoration-thickness: 1.25px !important;
+	color: rgb(255 255 255 / 0.5);
+}
+
+#floating-note-editor .ProseMirror hr {
+	border: none;
+	margin: 0.5rem 0;
+	height: 15px;
+	padding: 6px 0;
+	background-clip: content-box;
+	background-color: color-mix(
+		in srgb,
+		var(--color-accent),
+		rgb(255 255 255 / 0.5) 50%
+	);
+}
+
+#floating-note-editor .ProseMirror .monofont-block {
+	background: rgb(255 255 255 / 0.08);
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	padding: 0.5rem 0.75rem;
+	border-radius: 0.5rem;
+	margin: 0.5rem 0;
+}
+
+#floating-note-editor .milkdown-code-block {
+	margin: 0.5rem 0;
+	border: 1px solid rgb(255 255 255 / 0.1);
+	border-radius: 0.5rem;
+	background: rgb(255 255 255 / 0.05);
+	overflow: hidden;
+}
+
 #floating-note-editor .milkdown-code-block .cm-editor,
+#floating-note-editor .milkdown-code-block .cm-gutters,
+#floating-note-editor .milkdown-code-block .cm-scroller {
+	background: transparent !important;
+}
+
+#floating-note-editor .milkdown-code-block .cm-content {
+	font-family:
+		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+	font-size: 0.85em !important;
+	line-height: 1.5 !important;
+	color: rgb(255 255 255 / 0.88) !important;
+	padding: 0.75rem 0.875rem !important;
+}
+
 #floating-note-editor .milkdown-code-block .cm-gutters {
-	background: rgba(0, 0, 0, 0.25);
+	border: none !important;
+	color: rgb(255 255 255 / 0.3) !important;
+}
+
+#floating-note-editor .milkdown-code-block .cm-lineNumbers .cm-gutterElement {
+	padding-left: 0.5rem !important;
+	min-width: 1.75rem !important;
 }
 
 #floating-note-editor .milkdown-link-edit,
 #floating-note-editor .milkdown-link-preview,
 #floating-note-editor .milkdown-slash-menu,
 #floating-note-editor .milkdown-toolbar {
-	border: 1px solid rgba(255, 255, 255, 0.15);
-	background: rgba(10, 10, 10, 0.75);
-	backdrop-filter: blur(40px);
+	border: 1px solid rgb(255 255 255 / 0.15) !important;
+	background: rgb(10 10 10 / 0.1) !important;
+	backdrop-filter: blur(40px) !important;
+	-webkit-backdrop-filter: blur(40px) !important;
+	border-radius: 0.75rem !important;
+	box-shadow: 0 12px 34px rgb(0 0 0 / 0.28) !important;
+}
+
+#floating-note-editor .milkdown-link-edit .link-edit,
+#floating-note-editor .milkdown-link-preview .link-preview {
+	background: transparent !important;
+	box-shadow: none !important;
+}
+
+#floating-note-editor .milkdown-slash-menu .tab-group li.selected,
+#floating-note-editor .milkdown-slash-menu .tab-group li:hover {
+	background: color-mix(in srgb, var(--color-accent) 18%, transparent) !important;
+}
+
+#floating-note-editor .milkdown-slash-menu .menu-groups li.active,
+#floating-note-editor .milkdown-slash-menu .menu-groups li.hover {
+	background: color-mix(in srgb, var(--color-accent) 18%, transparent) !important;
+}
+
+#floating-note-editor .milkdown-toolbar .toolbar-item:hover {
+	background: color-mix(in srgb, var(--color-accent) 16%, transparent) !important;
+}
+
+#floating-note-editor .milkdown-toolbar .toolbar-item.active svg {
+	color: var(--color-accent) !important;
+	fill: var(--color-accent) !important;
+}
+#floating-note-editor .editor-search-match {
+	background: rgba(255, 200, 50, 0.35);
+	border-radius: 2px;
+}
+
+#floating-note-editor .editor-search-match.active {
+	background: rgba(255, 140, 50, 0.55);
+	box-shadow: 0 0 0 1px rgba(255, 140, 50, 0.8);
 }

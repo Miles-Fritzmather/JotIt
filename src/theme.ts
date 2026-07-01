@@ -6,6 +6,7 @@ export type BackdropMode = "glass" | "blur";
 export interface AppSettings {
 	accentColor: string;
 	backdropMode: BackdropMode;
+	pasteWithFormatting: boolean;
 	notesDirectory: string;
 }
 
@@ -21,6 +22,10 @@ export function setAccentColor(color: string) {
 
 export function setBackdropMode(backdropMode: BackdropMode) {
 	return invoke<void>("set_backdrop_mode", { backdropMode });
+}
+
+export function setPasteWithFormatting(pasteWithFormatting: boolean) {
+	return invoke<void>("set_paste_with_formatting", { pasteWithFormatting });
 }
 
 export function revealNotesDirectory() {

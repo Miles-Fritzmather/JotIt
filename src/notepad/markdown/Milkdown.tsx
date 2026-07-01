@@ -8,20 +8,55 @@ import {
 	prosePluginsCtx,
 } from "@milkdown/kit/core";
 import type { Ctx } from "@milkdown/kit/ctx";
+import { toggleLinkCommand } from "@milkdown/kit/component/link-tooltip";
 import {
 	bulletListSchema,
 	clearTextInCurrentBlockCommand,
 	listItemSchema,
+	paragraphSchema,
+	setBlockTypeCommand,
 	wrapInBlockTypeCommand,
 } from "@milkdown/kit/preset/commonmark";
 import { keymap } from "@milkdown/kit/prose/keymap";
+import type { Node as ProseNode } from "@milkdown/kit/prose/model";
+import type { EditorView } from "@milkdown/kit/prose/view";
 import {
 	type Command,
 	Selection,
 	TextSelection,
 } from "@milkdown/kit/prose/state";
 import { Milkdown, useEditor } from "@milkdown/react";
-import { FC } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { FC, useEffect } from "react";
+import {
+	clearEditorSearchBridge,
+	publishEditorSearchState,
+	registerEditorView,
+	unregisterEditorView,
+} from "./editorBridge";
+import { createEditorSearchPlugin } from "./editorSearch";
+import { monofontSchema } from "./monofont";
+import { createPasteFormattingPlugins } from "./pasteFormatting";
+
+const monofontIcon = `
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+  >
+    <g clip-path="url(#clip0_monofont)">
+      <path
+        d="M9.4 16.6L4.8 12L9.4 7.4L8 6L2 12L8 18L9.4 16.6ZM14.6 16.6L19.2 12L14.6 7.4L16 6L22 12L16 18L14.6 16.6Z"
+      />
+    </g>
+    <defs>
+      <clipPath id="clip0_monofont">
+        <rect width="24" height="24" />
+      </clipPath>
+    </defs>
+  </svg>
+`;
 
 const disableTextServicesAttributes = {
 	autocapitalize: "off",
@@ -100,12 +135,112 @@ const toggleTodo: Command = (state, dispatch) => {
 	return true;
 };
 
+// Block that represents the current "line" (list item, or top-level / blockquote block).
+function getLineBlockDepth($from: Parameters<Command>[0]["selection"]["$from"]): number {
+	for (let d = $from.depth; d > 0; d--) {
+		if ($from.node(d).type.name === "list_item") return d;
+	}
+	for (let d = $from.depth; d > 0; d--) {
+		const node = $from.node(d);
+		const parent = $from.node(d - 1);
+		if (
+			node.isBlock &&
+			(parent.type.name === "doc" || parent.type.name === "blockquote")
+		) {
+			return d;
+		}
+	}
+	return $from.depth;
+}
+
+function createEmptyLineBlock(ctx: Ctx, reference: ProseNode): ProseNode {
+	const para = paragraphSchema.type(ctx).create();
+	if (reference.type.name === "list_item") {
+		const attrs = { ...reference.attrs };
+		if (attrs.checked != null) {
+			attrs.checked = false;
+		}
+		return listItemSchema.type(ctx).create(attrs, para);
+	}
+	return para;
+}
+
+// Cmd+Enter on a checklist item toggles it; otherwise inserts a line below (VS Code-style).
+function modEnter(ctx: Ctx): Command {
+	return (state, dispatch, view) => {
+		if (toggleTodo(state, dispatch)) return true;
+		return insertLineRelative(ctx, "below")(state, dispatch, view);
+	};
+}
+
+// VS Code-style line insertion: new empty line above/below without changing the current line.
+function insertLineRelative(ctx: Ctx, direction: "above" | "below"): Command {
+	return (state, dispatch) => {
+		const { $from } = state.selection;
+		const depth = getLineBlockDepth($from);
+		if (depth < 1) return false;
+
+		const block = $from.node(depth);
+		const insertPos =
+			direction === "below" ? $from.after(depth) : $from.before(depth);
+		const newBlock = createEmptyLineBlock(ctx, block);
+
+		if (!dispatch) return true;
+
+		const tr = state.tr.insert(insertPos, newBlock);
+		const $sel = TextSelection.near(tr.doc.resolve(insertPos + 1), 1);
+		dispatch(tr.setSelection($sel).scrollIntoView());
+		return true;
+	};
+}
+
 // Editor keyboard shortcuts:
+//   Cmd/Ctrl + K               -> link
 //   Cmd/Ctrl + Shift + 8       -> bullet list
 //   Cmd/Ctrl + Shift + 9       -> todo (task) list
 //   Cmd/Ctrl + Alt + Up/Down   -> move the current list item up/down
-//   Cmd/Ctrl + Enter           -> toggle the current todo item
+//   Cmd/Ctrl + Enter           -> toggle checklist item, or insert line below
+//   Cmd/Ctrl + Shift + Enter   -> insert line above
+//   Cmd/Ctrl + Alt + Enter     -> toggle the current todo item
 // List creation mirrors Crepe's own block menu so it toggles cleanly.
+function openExternalLink(href: string) {
+	void openUrl(href).catch(() => {
+		window.open(href, "_blank", "noopener,noreferrer");
+	});
+}
+
+function handleLinkClick(view: EditorView, event: MouseEvent) {
+	if (event.button !== 0) {
+		return false;
+	}
+
+	const target = event.target;
+	if (!(target instanceof HTMLElement)) {
+		return false;
+	}
+
+	const editorRoot =
+		view.dom.closest<HTMLElement>(".milkdown") ?? view.dom.parentElement;
+	if (!editorRoot) {
+		return false;
+	}
+
+	const anchor = target.closest("a[href]");
+	if (!anchor || !editorRoot.contains(anchor)) {
+		return false;
+	}
+
+	const href = anchor.getAttribute("href");
+	if (!href || href.startsWith("#")) {
+		return false;
+	}
+
+	event.preventDefault();
+	event.stopPropagation();
+	openExternalLink(href);
+	return true;
+}
+
 function listShortcutsPlugin(ctx: Ctx) {
 	const wrapInList = (
 		nodeType: ReturnType<typeof bulletListSchema.type>,
@@ -117,12 +252,15 @@ function listShortcutsPlugin(ctx: Ctx) {
 	};
 
 	return keymap({
+		"Mod-k": () => ctx.get(commandsCtx).call(toggleLinkCommand.key),
 		"Mod-Shift-8": () => wrapInList(bulletListSchema.type(ctx)),
 		"Mod-Shift-9": () =>
 			wrapInList(listItemSchema.type(ctx), { checked: false }),
 		"Mod-Alt-ArrowUp": moveListItem(-1),
 		"Mod-Alt-ArrowDown": moveListItem(1),
-		"Mod-Enter": toggleTodo,
+		"Mod-Enter": modEnter(ctx),
+		"Mod-Shift-Enter": insertLineRelative(ctx, "above"),
+		"Mod-Alt-Enter": toggleTodo,
 	});
 }
 
@@ -151,12 +289,22 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 	initialMarkdown,
 	onMarkdownChange,
 }) => {
+	useEffect(() => {
+		return () => {
+			clearEditorSearchBridge();
+			unregisterEditorView();
+		};
+	}, [noteId]);
+
 	useEditor(
 		(root) => {
 			const crepe = new Crepe({
 				root,
 				defaultValue: initialMarkdown,
 				featureConfigs: {
+					[Crepe.Feature.Cursor]: {
+						virtual: false,
+					},
 					[Crepe.Feature.BlockEdit]: {
 						blockHandle: { shouldShow: () => false },
 						// Hide individual slash items by setting them to null:
@@ -165,13 +313,16 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 							h5: null,
 							h6: null,
 						},
-						// Or add custom items:
 						buildMenu: (builder) => {
-							builder.addGroup("custom", "Custom").addItem("my-item", {
-								label: "My block",
-								icon: "...",
+							builder.addGroup("basic", "Basic").addItem("monofont", {
+								label: "Monofont",
+								icon: monofontIcon,
 								onRun: (ctx) => {
-									/* ... */
+									const commands = ctx.get(commandsCtx);
+									commands.call(clearTextInCurrentBlockCommand.key);
+									commands.call(setBlockTypeCommand.key, {
+										nodeType: monofontSchema.type(ctx),
+									});
 								},
 							});
 						},
@@ -179,11 +330,14 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 				},
 			});
 
+			crepe.editor.use(monofontSchema);
+
 			crepe.on((listener) => {
 				listener.markdownUpdated((_ctx, markdown) => {
 					onMarkdownChange(noteId, markdown);
 				});
 				listener.mounted((ctx) => {
+					registerEditorView(ctx.get(editorViewCtx));
 					// Defer a frame so the ProseMirror DOM is laid out before we move the cursor/scroll.
 					window.requestAnimationFrame(() => focusAtDocumentEnd(ctx));
 				});
@@ -193,7 +347,9 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 				// Prepend so our bindings get first chance; handlers return false when they don't apply
 				// (e.g. Mod-Enter outside a todo), letting Crepe's defaults run.
 				ctx.update(prosePluginsCtx, (plugins) => [
+					...createPasteFormattingPlugins(ctx),
 					listShortcutsPlugin(ctx),
+					createEditorSearchPlugin(publishEditorSearchState),
 					...plugins,
 				]);
 
@@ -205,6 +361,12 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 					},
 					handleDOMEvents: {
 						...options.handleDOMEvents,
+						click(view, event) {
+							if (handleLinkClick(view, event)) {
+								return true;
+							}
+							return options.handleDOMEvents?.click?.(view, event) ?? false;
+						},
 						focus(view, event) {
 							disableAppleTextServices(view.dom);
 							return options.handleDOMEvents?.focus?.(view, event) ?? false;

@@ -443,6 +443,95 @@ pub fn save_note<R: Runtime>(
     note_summary_from_parts(&path, id, &markdown, &meta)
 }
 
+fn is_importable_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "txt"
+            )
+        })
+}
+
+#[tauri::command]
+pub fn share_note<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    anchor_x: f64,
+    anchor_y: f64,
+) -> Result<(), String> {
+    let notes_dir = ensure_notes_path(&app)?;
+    let path = note_path_for_id(&notes_dir, &id)?;
+    if !path.is_file() {
+        return Err("Note file not found".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::mpsc;
+
+        let win = app
+            .get_webview_window(LABEL)
+            .ok_or_else(|| "Floating note window not found".to_string())?;
+        let path_string = path.to_string_lossy().into_owned();
+        let (tx, rx) = mpsc::channel();
+
+        app.run_on_main_thread(move || {
+            let result = crate::share_note_file_at_anchor(
+                &win,
+                std::path::Path::new(&path_string),
+                anchor_x,
+                anchor_y,
+            );
+            let _ = tx.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+
+        return rx.recv().map_err(|error| error.to_string())?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+
+        app.opener()
+            .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+pub fn import_markdown_files<R: Runtime>(
+    app: AppHandle<R>,
+    paths: Vec<String>,
+) -> Result<Vec<NoteSummary>, String> {
+    let notes_dir = ensure_notes_path(&app)?;
+    let mut store = load_metadata_store(&notes_dir)?;
+    reconcile_metadata_store(&mut store, &notes_dir)?;
+
+    let mut imported = Vec::new();
+
+    for path_string in paths {
+        let source = PathBuf::from(path_string);
+        if !source.is_file() || !is_importable_extension(&source) {
+            continue;
+        }
+
+        let markdown = fs::read_to_string(&source).map_err(|error| error.to_string())?;
+        let id = fresh_note_id(&notes_dir)?;
+        let dest = note_path_for_id(&notes_dir, &id)?;
+        fs::write(&dest, &markdown).map_err(|error| error.to_string())?;
+
+        let meta = default_metadata();
+        store.notes.insert(id.clone(), meta.clone());
+        imported.push(note_summary_from_parts(&dest, id, &markdown, &meta)?);
+    }
+
+    save_metadata_store(&notes_dir, &store)?;
+    Ok(imported)
+}
+
 #[tauri::command]
 pub fn delete_note<R: Runtime>(app: AppHandle<R>, id: String) -> Result<(), String> {
     let notes_dir = ensure_notes_path(&app)?;
@@ -615,7 +704,7 @@ pub fn build_notepad_window<R: Runtime>(
 ) -> Result<tauri::WebviewWindow<R>, String> {
     let geometry = load_window_geometry(app);
     let builder =
-        WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(PathBuf::from("floating-note")))
+        WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(PathBuf::from("floating-note.html")))
             .title("Quick Note")
             .inner_size(geometry.width, geometry.height)
             .min_inner_size(MIN_WIDTH, MIN_HEIGHT)

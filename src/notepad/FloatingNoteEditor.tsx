@@ -1,4 +1,12 @@
-import { AlertTriangleIcon, SettingsIcon, StarIcon, XIcon } from "lucide-react";
+import {
+	AlertTriangleIcon,
+	ChevronDownIcon,
+	ChevronUpIcon,
+	SettingsIcon,
+	ShareIcon,
+	StarIcon,
+	XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	applyAccent,
@@ -8,12 +16,26 @@ import {
 	hexToRgbChannels,
 	revealNotesDirectory,
 	setAccentColor,
-	setBackdropMode,
+	setPasteWithFormatting,
 } from "../theme";
 import { IconButton } from "./Button";
+import {
+	EDITOR_ZOOM_DEFAULT,
+	loadEditorZoom,
+	saveEditorZoom,
+	stepEditorZoom,
+} from "./lib/editorZoom";
 import { DragRegion, HStack, Substack } from "./lib/helperdivs";
+import { setPasteWithFormatting as setPasteFormattingBridge } from "./lib/pasteSettings";
 import { cn, messageFromError } from "./lib/utils";
+import {
+	clearEditorSearchBridge,
+	stepEditorSearchMatch,
+	subscribeEditorSearch,
+	updateEditorSearch,
+} from "./markdown/editorBridge";
 import MDWrapper from "./markdown/wrapper";
+import { shareNote } from "./notes";
 import { useErrors } from "./providers/useErrors";
 import { useFocus } from "./providers/useFocus";
 import { useNotes } from "./providers/useNotes";
@@ -29,10 +51,18 @@ const FloatingNoteEditor = () => {
 	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 	const [notesDirectory, setNotesDirectory] = useState("");
 	const [accent, setAccent] = useState("#ff6363");
-	const [backdropMode, setBackdropModeState] = useState<BackdropMode>("glass");
+	const [, setBackdropModeState] = useState<BackdropMode>("glass");
+	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
 	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
+	const findInputRef = useRef<HTMLInputElement>(null);
+	const [editorZoom, setEditorZoom] = useState(loadEditorZoom);
+	const [isFindOpen, setIsFindOpen] = useState(false);
+	const [findQuery, setFindQuery] = useState("");
+	const [findMatchCount, setFindMatchCount] = useState(0);
+	const [findActiveIndex, setFindActiveIndex] = useState(0);
 	const accentSaveTimerRef = useRef<number | null>(null);
+	const shareButtonRef = useRef<HTMLButtonElement>(null);
 	const [shouldShowNoteIndicator, setShouldShowNoteIndicator] = useState(false);
 	const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [showError, setShowError] = useState(false);
@@ -47,10 +77,20 @@ const FloatingNoteEditor = () => {
 		cycleNote,
 		createNewNote,
 		deleteActiveNote,
+		importMarkdownFiles,
 		loadNote,
+		savePendingNow,
 		handleMarkdownChange,
 		updateNoteMetadata,
 	} = useNotes();
+
+	const closeFind = useCallback(() => {
+		setIsFindOpen(false);
+		setFindQuery("");
+		setFindMatchCount(0);
+		setFindActiveIndex(0);
+		clearEditorSearchBridge();
+	}, []);
 
 	function showNoteIndicator() {
 		setShouldShowNoteIndicator(true);
@@ -90,13 +130,14 @@ const FloatingNoteEditor = () => {
 		[commitAccent],
 	);
 
-	const onBackdropModeChange = useCallback((mode: BackdropMode) => {
-		setBackdropModeState(mode);
-		setBackdropMode(mode)
+	const onPasteWithFormattingChange = useCallback((enabled: boolean) => {
+		setPasteWithFormattingState(enabled);
+		setPasteFormattingBridge(enabled);
+		void setPasteWithFormatting(enabled)
 			.then(() => setSettingsError(null))
 			.catch((saveError) =>
 				setSettingsError(
-					`Could not save backdrop: ${messageFromError(saveError)}`,
+					`Could not save paste setting: ${messageFromError(saveError)}`,
 				),
 			);
 	}, []);
@@ -111,6 +152,8 @@ const FloatingNoteEditor = () => {
 				setNotesDirectory(settings.notesDirectory);
 				setAccent(settings.accentColor);
 				setBackdropModeState(settings.backdropMode);
+				setPasteWithFormattingState(settings.pasteWithFormatting);
+				setPasteFormattingBridge(settings.pasteWithFormatting);
 			})
 			.catch((loadError) =>
 				setSettingsError(
@@ -122,6 +165,39 @@ const FloatingNoteEditor = () => {
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
 			const isMod = event.metaKey || event.ctrlKey;
+
+			if (isMod && !event.altKey) {
+				if (event.key === "=" || event.key === "+") {
+					event.preventDefault();
+					event.stopPropagation();
+					setEditorZoom((current) => stepEditorZoom(current, 1));
+					return;
+				}
+
+				if (event.key === "-" || event.key === "_") {
+					event.preventDefault();
+					event.stopPropagation();
+					setEditorZoom((current) => stepEditorZoom(current, -1));
+					return;
+				}
+
+				if (event.key === "0") {
+					event.preventDefault();
+					event.stopPropagation();
+					saveEditorZoom(EDITOR_ZOOM_DEFAULT);
+					setEditorZoom(EDITOR_ZOOM_DEFAULT);
+					return;
+				}
+
+				if (!event.shiftKey && event.key.toLowerCase() === "f") {
+					event.preventDefault();
+					event.stopPropagation();
+					setIsSearchOpen(false);
+					setIsFindOpen(true);
+					return;
+				}
+			}
+
 			if (!isMod || event.shiftKey) {
 				return;
 			}
@@ -203,6 +279,37 @@ const FloatingNoteEditor = () => {
 	}, [isSearchOpen]);
 
 	useEffect(() => {
+		if (!isFindOpen) {
+			return;
+		}
+
+		window.requestAnimationFrame(() => {
+			findInputRef.current?.focus();
+			findInputRef.current?.select();
+		});
+	}, [isFindOpen]);
+
+	useEffect(() => {
+		return subscribeEditorSearch((state) => {
+			setFindMatchCount(state.matches.length);
+			setFindActiveIndex(
+				state.matches.length === 0 ? 0 : state.activeIndex + 1,
+			);
+		});
+	}, []);
+
+	useEffect(() => {
+		if (!isFindOpen) {
+			return;
+		}
+		updateEditorSearch(findQuery);
+	}, [findQuery, isFindOpen]);
+
+	useEffect(() => {
+		closeFind();
+	}, [activeNote?.id, closeFind]);
+
+	useEffect(() => {
 		if (!isDeleteConfirmOpen) {
 			return;
 		}
@@ -254,7 +361,21 @@ const FloatingNoteEditor = () => {
 	}, [isSettingsOpen]);
 
 	useEffect(() => {
+		let active = true;
+		void getSettings()
+			.then((settings) => {
+				if (!active) {
+					return;
+				}
+				setPasteWithFormattingState(settings.pasteWithFormatting);
+				setPasteFormattingBridge(settings.pasteWithFormatting);
+			})
+			.catch(() => {
+				// Fall back to defaults already in state/bridge.
+			});
+
 		return () => {
+			active = false;
 			if (accentSaveTimerRef.current !== null) {
 				window.clearTimeout(accentSaveTimerRef.current);
 			}
@@ -335,6 +456,19 @@ const FloatingNoteEditor = () => {
 		}
 	}, [error]);
 
+	const handleFindKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+		if (event.key === "Escape") {
+			event.preventDefault();
+			closeFind();
+			return;
+		}
+
+		if (event.key === "Enter") {
+			event.preventDefault();
+			stepEditorSearchMatch(event.shiftKey ? -1 : 1);
+		}
+	};
+
 	const toggleStarNote = useCallback(
 		async (noteId: string | undefined) => {
 			if (!noteId) {
@@ -354,6 +488,33 @@ const FloatingNoteEditor = () => {
 		},
 		[notes, setError, updateNoteMetadata],
 	);
+
+	const handleShareNote = useCallback(async () => {
+		if (!activeNote) {
+			return;
+		}
+
+		const saved = await savePendingNow();
+		if (!saved) {
+			return;
+		}
+
+		const button = shareButtonRef.current;
+		if (!button) {
+			return;
+		}
+
+		const rect = button.getBoundingClientRect();
+		const anchorX = rect.left + rect.width / 2;
+		const anchorY = rect.top + rect.height / 2;
+
+		try {
+			await shareNote(activeNote.id, anchorX, anchorY);
+			setError(null);
+		} catch (shareError) {
+			setError(`Could not share note: ${messageFromError(shareError)}`);
+		}
+	}, [activeNote, savePendingNow, setError]);
 
 	return (
 		<div
@@ -385,12 +546,21 @@ const FloatingNoteEditor = () => {
 							icon={
 								<StarIcon
 									strokeDasharray={activeNote?.isStarred ? "0" : "100"}
+									fill={activeNote?.isStarred ? "currentColor" : "none"}
 									className={cn(
-										"w-4 h-4 text-white/55",
-										activeNote?.isStarred ? "text-accent" : "text-white/55",
+										"w-4 h-4 text-white/55 transition-colors duration-200",
+										activeNote?.isStarred ? "text-accent/80" : "text-white/55",
 									)}
 								/>
 							}
+						/>
+						<IconButton
+							ref={shareButtonRef}
+							type="button"
+							onClick={() => void handleShareNote()}
+							aria-label="Share note"
+							title="Share note"
+							icon={<ShareIcon className="w-4 h-4" />}
 						/>
 						<IconButton
 							type="button"
@@ -502,6 +672,41 @@ const FloatingNoteEditor = () => {
 					</div>
 				</div>
 			) : null}
+
+			{isFindOpen ? (
+				<div className="absolute inset-x-4 top-14 z-40 flex h-11 items-center gap-2 overflow-hidden rounded-lg border border-white/15 bg-neutral-950/10 px-3 backdrop-blur-2xl">
+					<input
+						ref={findInputRef}
+						value={findQuery}
+						onChange={(event) => setFindQuery(event.target.value)}
+						onKeyDown={handleFindKeyDown}
+						className="min-w-0 flex-1 bg-transparent text-[14px] text-white outline-none placeholder:text-white/35"
+						placeholder="Find in note"
+						spellCheck={false}
+					/>
+					<span className="shrink-0 text-[12px] tabular-nums text-white/45">
+						{findMatchCount === 0
+							? findQuery.trim()
+								? "No matches"
+								: ""
+							: `${findActiveIndex} of ${findMatchCount}`}
+					</span>
+					<IconButton
+						type="button"
+						aria-label="Previous match"
+						title="Previous match (Shift+Enter)"
+						onClick={() => stepEditorSearchMatch(-1)}
+						icon={<ChevronUpIcon className="h-4 w-4" />}
+					/>
+					<IconButton
+						type="button"
+						aria-label="Next match"
+						title="Next match (Enter)"
+						onClick={() => stepEditorSearchMatch(1)}
+						icon={<ChevronDownIcon className="h-4 w-4" />}
+					/>
+				</div>
+			) : null}
 			{isDeleteConfirmOpen ? (
 				<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
 					<div
@@ -543,7 +748,7 @@ const FloatingNoteEditor = () => {
 			) : null}
 			{isSettingsOpen ? (
 				<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
-					<div className="w-full max-w-[560px] overflow-hidden rounded-xl border border-white/15 bg-neutral-950/85 shadow shadow-black backdrop-blur-2xl">
+					<div className="w-full max-w-[560px] overflow-hidden rounded-xl border border-white/15 bg-neutral-950/10 shadow-lg shadow-black/20 backdrop-blur-2xl">
 						<div className="flex items-start justify-between border-b border-white/10 px-5 pt-4 pb-3">
 							<div>
 								<div className="text-[15px] font-semibold text-white">
@@ -593,36 +798,52 @@ const FloatingNoteEditor = () => {
 								</section>
 								<section className="flex flex-col gap-2">
 									<span className="text-[13px] font-medium text-white/80">
-										Notepad backdrop
+										Import
+									</span>
+									<button
+										type="button"
+										onClick={() => void importMarkdownFiles()}
+										className="w-fit rounded-md border border-white/15 bg-white/6 px-3 py-2 text-[12px] text-white/80 transition-colors hover:bg-white/12 hover:text-white"
+									>
+										Import markdown files
+									</button>
+									<p className="text-[12px] text-white/35">
+										Copy .md, .markdown, or .txt files into your notes folder.
+									</p>
+								</section>
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
+										Paste
 									</span>
 									<div className="flex gap-2">
 										<button
 											type="button"
-											aria-pressed={backdropMode === "glass"}
-											onClick={() => onBackdropModeChange("glass")}
-											className={cn(
-												"rounded-md border px-3 py-2 text-[12px] transition-colors",
-												backdropMode === "glass"
+											aria-pressed={pasteWithFormatting}
+											onClick={() => onPasteWithFormattingChange(true)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												pasteWithFormatting
 													? "border-accent/50 bg-accent/16 text-white"
-													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white",
-											)}
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
 										>
-											Liquid glass
+											Formatted
 										</button>
 										<button
 											type="button"
-											aria-pressed={backdropMode === "blur"}
-											onClick={() => onBackdropModeChange("blur")}
-											className={cn(
-												"rounded-md border px-3 py-2 text-[12px] transition-colors",
-												backdropMode === "blur"
+											aria-pressed={!pasteWithFormatting}
+											onClick={() => onPasteWithFormattingChange(false)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												!pasteWithFormatting
 													? "border-accent/50 bg-accent/16 text-white"
-													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white",
-											)}
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
 										>
-											High blur
+											Plain text
 										</button>
 									</div>
+									<p className="text-[12px] text-white/35">
+										⌘⇧V pastes using the other mode
+									</p>
 								</section>
 								<section className="flex flex-col gap-2">
 									<span className="text-[13px] font-medium text-white/80">
@@ -634,7 +855,7 @@ const FloatingNoteEditor = () => {
 											value={accent}
 											onChange={(event) => onAccentChange(event.target.value)}
 											aria-label="Accent color"
-											className="h-9 w-12 cursor-pointer rounded-md border border-white/15 bg-transparent"
+											className="h-9 w-12 cursor-pointer rounded-md border border-white/15 bg-transparent "
 										/>
 										<input
 											type="text"
@@ -642,7 +863,7 @@ const FloatingNoteEditor = () => {
 											spellCheck={false}
 											onChange={(event) => onAccentChange(event.target.value)}
 											aria-label="Accent color hex"
-											className="w-28 rounded-md border border-white/15 bg-white/4 px-3 py-2 text-[13px] uppercase text-white outline-none focus:border-accent/60"
+											className="rounded-md border border-white/15 bg-white/4 px-3 py-2 text-[13px] uppercase text-white outline-none focus:border-accent/60"
 										/>
 									</div>
 								</section>
@@ -660,6 +881,7 @@ const FloatingNoteEditor = () => {
 					noteId={activeNote.id}
 					initialMarkdown={activeNote.markdown}
 					onMarkdownChange={handleMarkdownChange}
+					zoom={editorZoom}
 				/>
 			) : (
 				<div className="note-content">No note loaded</div>

@@ -28,12 +28,18 @@ impl Default for BackdropMode {
     }
 }
 
+fn default_paste_with_formatting() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredSettings {
     accent_color: String,
     #[serde(default)]
     backdrop_mode: BackdropMode,
+    #[serde(default = "default_paste_with_formatting")]
+    paste_with_formatting: bool,
 }
 
 impl Default for StoredSettings {
@@ -41,6 +47,7 @@ impl Default for StoredSettings {
         Self {
             accent_color: DEFAULT_ACCENT.to_string(),
             backdrop_mode: BackdropMode::default(),
+            paste_with_formatting: default_paste_with_formatting(),
         }
     }
 }
@@ -51,6 +58,7 @@ impl Default for StoredSettings {
 pub struct SettingsView {
     accent_color: String,
     backdrop_mode: BackdropMode,
+    paste_with_formatting: bool,
     notes_directory: String,
 }
 
@@ -100,6 +108,7 @@ pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Result<SettingsView, Strin
     Ok(SettingsView {
         accent_color: stored.accent_color,
         backdrop_mode: stored.backdrop_mode,
+        paste_with_formatting: stored.paste_with_formatting,
         notes_directory,
     })
 }
@@ -131,6 +140,16 @@ pub fn set_backdrop_mode<R: Runtime>(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_paste_with_formatting<R: Runtime>(
+    app: AppHandle<R>,
+    paste_with_formatting: bool,
+) -> Result<(), String> {
+    let mut stored = load_settings(&app);
+    stored.paste_with_formatting = paste_with_formatting;
+    save_settings(&app, &stored)
 }
 
 #[tauri::command]

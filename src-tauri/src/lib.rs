@@ -504,11 +504,76 @@ mod macos {
             app.deactivate();
         }
     }
+
+    pub(super) fn share_file_at_anchor<R: tauri::Runtime>(
+        window: &tauri::WebviewWindow<R>,
+        file_path: &std::path::Path,
+        anchor_x: f64,
+        anchor_y: f64,
+    ) -> Result<(), String> {
+        use objc2::rc::Retained;
+        use objc2::runtime::AnyObject;
+        use objc2::AnyThread;
+        use objc2_app_kit::{NSSharingServicePicker, NSWindow};
+        use objc2_foundation::{
+            NSArray, NSPoint, NSRect, NSRectEdge, NSSize, NSString, NSURL,
+        };
+
+        let ptr = window.ns_window().map_err(|error| error.to_string())? as *mut NSWindow;
+        let ns_window = unsafe { &*ptr };
+        let Some(content_view) = ns_window.contentView() else {
+            return Err("Floating note content view not found".to_string());
+        };
+
+        let view_height = content_view.bounds().size.height;
+        let cocoa_y = view_height - anchor_y;
+        let rect = NSRect::new(
+            NSPoint::new(anchor_x, cocoa_y),
+            NSSize::new(1.0, 1.0),
+        );
+
+        let path = NSString::from_str(&file_path.to_string_lossy());
+        let url: Retained<NSURL> = NSURL::fileURLWithPath(&path);
+        let url_object: &AnyObject = &*url;
+        let items = NSArray::from_slice(&[url_object]);
+        let picker = unsafe {
+            NSSharingServicePicker::initWithItems(NSSharingServicePicker::alloc(), &items)
+        };
+
+        picker.showRelativeToRect_ofView_preferredEdge(
+            rect,
+            &content_view,
+            NSRectEdge::MinY,
+        );
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn share_note_file_at_anchor<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    file_path: &std::path::Path,
+    anchor_x: f64,
+    anchor_y: f64,
+) -> Result<(), String> {
+    macos::share_file_at_anchor(window, file_path, anchor_x, anchor_y)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn share_note_file_at_anchor<R: tauri::Runtime>(
+    _window: &tauri::WebviewWindow<R>,
+    _file_path: &std::path::Path,
+    _anchor_x: f64,
+    _anchor_y: f64,
+) -> Result<(), String> {
+    Err("Share sheet is only available on macOS".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init());
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(notepad::shortcut_plugin()).setup(|app| {
         #[cfg(target_os = "macos")]
@@ -526,10 +591,13 @@ pub fn run() {
         notepad::save_note,
         notepad::update_note,
         notepad::delete_note,
+        notepad::share_note,
+        notepad::import_markdown_files,
         notepad::close_notepad_command,
         settings::get_settings,
         settings::set_accent_color,
         settings::set_backdrop_mode,
+        settings::set_paste_with_formatting,
         settings::reveal_notes_directory,
         settings::open_settings
     ]);
