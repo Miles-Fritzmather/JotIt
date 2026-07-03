@@ -19,9 +19,9 @@ import {
 	noteSummaryFromDocument,
 	pickAndImportMarkdownFiles,
 	readNote,
-	updateNote,
 	saveNote,
 	titleFromMarkdown,
+	updateNote,
 } from "../notes";
 import { useErrors } from "./useErrors";
 
@@ -34,12 +34,15 @@ type NotesContextType = {
 	cycleNote: (direction: -1 | 1) => void;
 	createNewNote: () => void;
 	deleteActiveNote: () => void;
+	deleteNoteById: (id: string) => Promise<void>;
 	importMarkdownFiles: () => Promise<void>;
 	loadNote: (id: string) => void;
 	handleMarkdownChange: (noteId: string, markdown: string) => void;
 	savePendingNow: () => Promise<boolean>;
 	scheduleSave: (id: string, markdown: string) => void;
 	clearSaveTimer: () => void;
+	previouslyVisitedNoteId: string | null;
+	loadPreviouslyVisitedNote: () => void;
 	updateNoteMetadata: (
 		noteId: string,
 		metadata: Partial<NoteMetadata>,
@@ -66,6 +69,9 @@ const NotesProvider = ({
 	const { setError } = useErrors();
 	const [notes, setNotes] = useState<NoteSummary[]>([]);
 	const [activeNote, setActiveNote] = useState<NoteDocument | null>(null);
+	const [previouslyVisitedNoteId, setPreviouslyVisitedNoteId] = useState<
+		string | null
+	>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const activeNoteRef = useRef<NoteDocument | null>(null);
 	const notesRef = useRef<NoteSummary[]>([]);
@@ -102,6 +108,24 @@ const NotesProvider = ({
 			saveTimerRef.current = null;
 		}
 	}, []);
+
+	const loadPreviouslyVisitedNote = useCallback(() => {
+		console.log(
+			"Loading previously visited note",
+			previouslyVisitedNoteId,
+			"from current active note",
+			activeNoteRef.current?.id,
+		);
+		if (
+			previouslyVisitedNoteId &&
+			activeNoteRef.current?.id &&
+			activeNoteRef.current?.id !== previouslyVisitedNoteId
+		) {
+			const staticNote = previouslyVisitedNoteId;
+			void loadNote(staticNote);
+			setPreviouslyVisitedNoteId(activeNoteRef.current.id);
+		}
+	}, [previouslyVisitedNoteId]);
 
 	const savePendingNow = useCallback(async () => {
 		const pending = pendingSaveRef.current;
@@ -163,6 +187,9 @@ const NotesProvider = ({
 	const loadNote = useCallback(
 		async (id: string) => {
 			if (activeNoteRef.current?.id === id) return;
+			if (activeNoteRef.current?.id) {
+				setPreviouslyVisitedNoteId(activeNoteRef.current.id);
+			}
 
 			const saved = await savePendingNow();
 			if (!saved) {
@@ -282,6 +309,10 @@ const NotesProvider = ({
 
 		// Drop any queued autosave for this note first — otherwise the debounced write would
 		// recreate the file we are about to delete.
+		if (previouslyVisitedNoteId === current.id) {
+			setPreviouslyVisitedNoteId(null);
+		}
+
 		if (pendingSaveRef.current?.id === current.id) {
 			pendingSaveRef.current = null;
 		}
@@ -313,6 +344,32 @@ const NotesProvider = ({
 			setError(`Could not open another note: ${messageFromError(loadError)}`);
 		}
 	}, [clearSaveTimer]);
+
+	const deleteNoteById = useCallback(
+		async (id: string) => {
+			// Deleting the open note needs the full flow (drop pending autosave, load a replacement).
+			if (activeNoteRef.current?.id === id) {
+				await deleteActiveNote();
+				return;
+			}
+
+			setPreviouslyVisitedNoteId((current) => (current === id ? null : current));
+			if (pendingSaveRef.current?.id === id) {
+				pendingSaveRef.current = null;
+			}
+
+			try {
+				await deleteNote(id);
+			} catch (deleteError) {
+				setError(`Could not delete note: ${messageFromError(deleteError)}`);
+				return;
+			}
+
+			setNotes((currentNotes) => currentNotes.filter((note) => note.id !== id));
+			setError(null);
+		},
+		[deleteActiveNote, setError],
+	);
 
 	const importMarkdownFiles = useCallback(async () => {
 		const saved = await savePendingNow();
@@ -348,7 +405,9 @@ const NotesProvider = ({
 				),
 			);
 			setActiveNote((currentNote) =>
-				currentNote?.id === noteId ? { ...currentNote, ...nextMeta } : currentNote,
+				currentNote?.id === noteId
+					? { ...currentNote, ...nextMeta }
+					: currentNote,
 			);
 
 			try {
@@ -377,7 +436,9 @@ const NotesProvider = ({
 						? { ...currentNote, ...previousMeta }
 						: currentNote,
 				);
-				setError(`Could not update note metadata: ${messageFromError(updateError)}`);
+				setError(
+					`Could not update note metadata: ${messageFromError(updateError)}`,
+				);
 			}
 		},
 		[applySavedSummary],
@@ -390,9 +451,11 @@ const NotesProvider = ({
 			isLoading,
 			pendingSave: pendingSaveRef.current,
 			saveTimer: saveTimerRef.current,
+			previouslyVisitedNoteId,
 			cycleNote,
 			createNewNote,
 			deleteActiveNote,
+			deleteNoteById,
 			importMarkdownFiles,
 			loadNote,
 			handleMarkdownChange,
@@ -400,6 +463,7 @@ const NotesProvider = ({
 			scheduleSave,
 			clearSaveTimer,
 			updateNoteMetadata,
+			loadPreviouslyVisitedNote,
 		};
 	}, [
 		notes,

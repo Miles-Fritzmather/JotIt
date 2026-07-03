@@ -5,6 +5,7 @@ import {
 	SettingsIcon,
 	ShareIcon,
 	StarIcon,
+	TrashIcon,
 	XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -16,6 +17,7 @@ import {
 	hexToRgbChannels,
 	revealNotesDirectory,
 	setAccentColor,
+	setHideOnScreenShare,
 	setPasteWithFormatting,
 } from "../theme";
 import { IconButton } from "./Button";
@@ -40,6 +42,7 @@ import { useErrors } from "./providers/useErrors";
 import { useFocus } from "./providers/useFocus";
 import { useNotes } from "./providers/useNotes";
 import "./styling/main.css";
+import TableOfContents from "./TableOfContents";
 
 const FloatingNoteEditor = () => {
 	const { setError, error, cleanError } = useErrors();
@@ -47,12 +50,16 @@ const FloatingNoteEditor = () => {
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
-	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+	const [deleteTarget, setDeleteTarget] = useState<{
+		id: string;
+		title: string;
+	} | null>(null);
 	const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 	const [notesDirectory, setNotesDirectory] = useState("");
 	const [accent, setAccent] = useState("#ff6363");
 	const [, setBackdropModeState] = useState<BackdropMode>("glass");
 	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
+	const [hideOnScreenShare, setHideOnScreenShareState] = useState(false);
 	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const findInputRef = useRef<HTMLInputElement>(null);
@@ -76,12 +83,13 @@ const FloatingNoteEditor = () => {
 		isLoading,
 		cycleNote,
 		createNewNote,
-		deleteActiveNote,
+		deleteNoteById,
 		importMarkdownFiles,
 		loadNote,
 		savePendingNow,
 		handleMarkdownChange,
 		updateNoteMetadata,
+		loadPreviouslyVisitedNote,
 	} = useNotes();
 
 	const closeFind = useCallback(() => {
@@ -142,9 +150,20 @@ const FloatingNoteEditor = () => {
 			);
 	}, []);
 
+	const onHideOnScreenShareChange = useCallback((enabled: boolean) => {
+		setHideOnScreenShareState(enabled);
+		void setHideOnScreenShare(enabled)
+			.then(() => setSettingsError(null))
+			.catch((saveError) =>
+				setSettingsError(
+					`Could not save screen share setting: ${messageFromError(saveError)}`,
+				),
+			);
+	}, []);
+
 	const openInNoteSettings = useCallback(() => {
 		setIsSearchOpen(false);
-		setIsDeleteConfirmOpen(false);
+		setDeleteTarget(null);
 		setIsSettingsOpen(true);
 		setSettingsError(null);
 		void getSettings()
@@ -154,6 +173,7 @@ const FloatingNoteEditor = () => {
 				setBackdropModeState(settings.backdropMode);
 				setPasteWithFormattingState(settings.pasteWithFormatting);
 				setPasteFormattingBridge(settings.pasteWithFormatting);
+				setHideOnScreenShareState(settings.hideOnScreenShare);
 			})
 			.catch((loadError) =>
 				setSettingsError(
@@ -213,8 +233,20 @@ const FloatingNoteEditor = () => {
 				event.stopPropagation();
 				if (activeNote) {
 					setIsSearchOpen(false);
-					setIsDeleteConfirmOpen(true);
+					setDeleteTarget({ id: activeNote.id, title: activeNote.title });
 				}
+				return;
+			}
+
+			if (
+				event.ctrlKey &&
+				!event.metaKey &&
+				!event.altKey &&
+				event.key.toLowerCase() === "tab"
+			) {
+				event.preventDefault();
+				event.stopPropagation();
+				void loadPreviouslyVisitedNote();
 				return;
 			}
 
@@ -240,7 +272,7 @@ const FloatingNoteEditor = () => {
 				event.stopPropagation();
 				setSearchQuery("");
 				setHighlightedIndex(0);
-				setIsSearchOpen(true);
+				setIsSearchOpen((prev) => !prev);
 				return;
 			}
 
@@ -310,7 +342,7 @@ const FloatingNoteEditor = () => {
 	}, [activeNote?.id, closeFind]);
 
 	useEffect(() => {
-		if (!isDeleteConfirmOpen) {
+		if (!deleteTarget) {
 			return;
 		}
 
@@ -318,16 +350,16 @@ const FloatingNoteEditor = () => {
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
-				setIsDeleteConfirmOpen(false);
+				setDeleteTarget(null);
 				return;
 			}
 
 			if (event.key === "Enter") {
 				event.preventDefault();
 				event.stopPropagation();
-				setIsDeleteConfirmOpen(false);
+				setDeleteTarget(null);
 
-				void deleteActiveNote();
+				void deleteNoteById(deleteTarget.id);
 			}
 		};
 
@@ -337,7 +369,7 @@ const FloatingNoteEditor = () => {
 				capture: true,
 			});
 		};
-	}, [isDeleteConfirmOpen, deleteActiveNote]);
+	}, [deleteTarget, deleteNoteById]);
 
 	useEffect(() => {
 		if (!isSettingsOpen) {
@@ -391,14 +423,18 @@ const FloatingNoteEditor = () => {
 		return source;
 	}, [notes, searchQuery]);
 
-	const starredFilteredNotes = useMemo(
-		() => filteredNotes.filter((note) => note.isStarred),
-		[filteredNotes],
-	);
-	const unstarredFilteredNotes = useMemo(
-		() => filteredNotes.filter((note) => !note.isStarred),
-		[filteredNotes],
-	);
+	const filteredAndStarPriotitizedNotes = useMemo(() => {
+		filteredNotes.sort((a, b) => {
+			if (a.isStarred && !b.isStarred) {
+				return -1;
+			}
+			if (!a.isStarred && b.isStarred) {
+				return 1;
+			}
+			return 0;
+		});
+		return filteredNotes;
+	}, [filteredNotes]);
 
 	useEffect(() => {
 		setHighlightedIndex(0);
@@ -489,50 +525,62 @@ const FloatingNoteEditor = () => {
 		[notes, setError, updateNoteMetadata],
 	);
 
-	const handleShareNote = useCallback(async () => {
+	const handleShareNote = useCallback(
+		async (noteId: string, anchor?: { x: number; y: number }) => {
+			// Flush any pending edit first so the shared copy has the latest content and title.
+			const saved = await savePendingNow();
+			if (!saved) {
+				return;
+			}
+
+			let { x, y } = anchor ?? {};
+			if (x === undefined || y === undefined) {
+				const button = shareButtonRef.current;
+				if (!button) {
+					return;
+				}
+				const rect = button.getBoundingClientRect();
+				x = rect.left + rect.width / 2;
+				y = rect.top + rect.height / 2;
+			}
+
+			try {
+				await shareNote(noteId, x, y);
+				setError(null);
+			} catch (shareError) {
+				setError(`Could not share note: ${messageFromError(shareError)}`);
+			}
+		},
+		[savePendingNow, setError],
+	);
+
+	const handleShareActiveNote = useCallback(async () => {
 		if (!activeNote) {
 			return;
 		}
 
-		const saved = await savePendingNow();
-		if (!saved) {
-			return;
-		}
-
-		const button = shareButtonRef.current;
-		if (!button) {
-			return;
-		}
-
-		const rect = button.getBoundingClientRect();
-		const anchorX = rect.left + rect.width / 2;
-		const anchorY = rect.top + rect.height / 2;
-
-		try {
-			await shareNote(activeNote.id, anchorX, anchorY);
-			setError(null);
-		} catch (shareError) {
-			setError(`Could not share note: ${messageFromError(shareError)}`);
-		}
-	}, [activeNote, savePendingNow, setError]);
+		void handleShareNote(activeNote.id);
+	}, [activeNote, handleShareNote]);
 
 	return (
 		<div
 			id="floating-note-editor"
 			className={cn(
 				"border-4 border-accent/20 transition-colors duration-300",
-				isFocused ? "border-accent/30" : "border-accent/5",
+				isFocused ? "border-accent/60" : "border-accent/5",
 			)}
 		>
 			<DragRegion
 				className={cn(
-					"note-navbar absolute inset-x-0 top-0 z-20 flex h-10 shrink-0 items-center justify-center border-b border-white/10 backdrop-blur-sm shadow-lg shadow-black/10",
-					isFocused ? "focused" : "unfocused",
+					"note-navbar absolute inset-x-0 top-0 z-20 flex h-10 shrink-0 items-center justify-center border-b border-white/10 backdrop-blur-sm",
+					isFocused
+						? "focused shadow-xl shadow-black/35"
+						: "unfocused shadow-lg shadow-black/10",
 				)}
 				aria-label="Drag to move note"
 			>
 				<HStack fillWidth gap={4} x="between" y="middle" className="mx-4">
-					<div className="truncate text-left text-[12px] font-medium leading-none text-white/55">
+					<div className="truncate text-left text-[12px] font-medium leading-none text-white/80">
 						{activeNote?.title ?? "Notes"}
 					</div>
 					<div
@@ -557,7 +605,7 @@ const FloatingNoteEditor = () => {
 						<IconButton
 							ref={shareButtonRef}
 							type="button"
-							onClick={() => void handleShareNote()}
+							onClick={() => void handleShareActiveNote()}
 							aria-label="Share note"
 							title="Share note"
 							icon={<ShareIcon className="w-4 h-4" />}
@@ -600,66 +648,95 @@ const FloatingNoteEditor = () => {
 						spellCheck={false}
 					/>
 					<div className="max-h-72 overflow-y-auto py-1">
-						{filteredNotes.length > 0 ? (
+						{filteredAndStarPriotitizedNotes.length > 0 ? (
 							<>
-								{starredFilteredNotes.length > 0
-									? starredFilteredNotes.map((note) => {
-											const noteIndex = filteredNotes.findIndex(
-												(item) => item.id === note.id,
-											);
+								{filteredAndStarPriotitizedNotes.length > 0
+									? filteredAndStarPriotitizedNotes.map((note, index) => {
 											return (
-												<button
+												// Not a <button>: the row holds the action buttons, and buttons can't nest.
+												<div
 													key={note.id}
-													type="button"
-													onMouseEnter={() => setHighlightedIndex(noteIndex)}
+													role="button"
+													tabIndex={-1}
+													onMouseEnter={() => setHighlightedIndex(index)}
 													onClick={() => {
 														void loadNote(note.id);
 														showNoteIndicator();
+														setIsSearchOpen(false);
 													}}
-													className={[
-														"flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors",
-														noteIndex === highlightedIndex
-															? "bg-accent/18 text-white"
-															: "text-white/72 hover:bg-white/10 hover:text-white",
-													].join(" ")}
+													className={cn(
+														"text-white/72 flex h-10 w-full cursor-pointer items-center gap-3 px-4 text-left text-[13px] transition-colors hover:bg-accent/18 hover:text-white",
+														index === highlightedIndex &&
+															"bg-accent/18 text-white",
+													)}
 												>
+													{activeNote?.id === note.id && (
+														<div className="w-[2px] h-3.5 shrink-0 bg-accent rounded-full" />
+													)}
 													<span className="min-w-0 flex-1 truncate">
 														{note.title}
 													</span>
-													<StarIcon className="h-3.5 w-3.5 shrink-0 text-accent" />
-												</button>
-											);
-										})
-									: null}
-
-								{unstarredFilteredNotes.length > 0
-									? unstarredFilteredNotes.map((note) => {
-											const noteIndex = filteredNotes.findIndex(
-												(item) => item.id === note.id,
-											);
-											return (
-												<button
-													key={note.id}
-													type="button"
-													onMouseEnter={() => setHighlightedIndex(noteIndex)}
-													onClick={() => {
-														void loadNote(note.id);
-														showNoteIndicator();
-													}}
-													className={[
-														"flex h-10 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors",
-														noteIndex === highlightedIndex
-															? "bg-accent/18 text-white"
-															: "text-white/72 hover:bg-white/10 hover:text-white",
-													].join(" ")}
-												>
-													<span className="min-w-0 flex-1 truncate">
-														{note.title}
-													</span>
-													{note.id === activeNote?.id ? (
-														<span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-													) : null}
-												</button>
+													{index === highlightedIndex ? (
+														<>
+															<IconButton
+																type="button"
+																onClick={(event) => {
+																	event.stopPropagation();
+																	void toggleStarNote(note.id);
+																}}
+																aria-label={
+																	note.isStarred ? "Unstar note" : "Star note"
+																}
+																title={
+																	note.isStarred ? "Unstar note" : "Star note"
+																}
+																icon={
+																	<StarIcon
+																		fill={
+																			note.isStarred ? "currentColor" : "none"
+																		}
+																		className={cn(
+																			"w-4 h-4",
+																			note.isStarred && "text-accent/80",
+																		)}
+																	/>
+																}
+															/>
+															<IconButton
+																type="button"
+																onClick={(event) => {
+																	event.stopPropagation();
+																	const rect =
+																		event.currentTarget.getBoundingClientRect();
+																	void handleShareNote(note.id, {
+																		x: rect.left + rect.width / 2,
+																		y: rect.top + rect.height / 2,
+																	});
+																}}
+																aria-label="Share note"
+																title="Share note"
+																icon={<ShareIcon className="w-4 h-4" />}
+															/>
+															<IconButton
+																type="button"
+																onClick={(event) => {
+																	event.stopPropagation();
+																	setDeleteTarget({
+																		id: note.id,
+																		title: note.title,
+																	});
+																}}
+																aria-label="Delete note"
+																title="Delete note"
+																icon={<TrashIcon className="w-4 h-4" />}
+															/>
+														</>
+													) : (
+														note.isStarred && (
+															<StarIcon className="h-3.5 w-3.5 shrink-0 text-accent" />
+														)
+													)}
+												</div>
 											);
 										})
 									: null}
@@ -707,7 +784,7 @@ const FloatingNoteEditor = () => {
 					/>
 				</div>
 			) : null}
-			{isDeleteConfirmOpen ? (
+			{deleteTarget ? (
 				<div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
 					<div
 						role="alertdialog"
@@ -720,13 +797,14 @@ const FloatingNoteEditor = () => {
 								Delete note?
 							</div>
 							<div className="mt-1 truncate text-[12px] text-white/55">
-								{activeNote?.title ?? "This note"} will be permanently deleted.
+								{deleteTarget.title || "This note"} will be permanently
+								deleted.
 							</div>
 						</div>
 						<div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
 							<button
 								type="button"
-								onClick={() => setIsDeleteConfirmOpen(false)}
+								onClick={() => setDeleteTarget(null)}
 								className="rounded-md px-3 py-1.5 text-[13px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
 							>
 								Cancel
@@ -735,8 +813,8 @@ const FloatingNoteEditor = () => {
 								type="button"
 								autoFocus
 								onClick={() => {
-									setIsDeleteConfirmOpen(false);
-									void deleteActiveNote();
+									setDeleteTarget(null);
+									void deleteNoteById(deleteTarget.id);
 								}}
 								className="rounded-md bg-accent/90 px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-accent"
 							>
@@ -847,6 +925,41 @@ const FloatingNoteEditor = () => {
 								</section>
 								<section className="flex flex-col gap-2">
 									<span className="text-[13px] font-medium text-white/80">
+										Screen sharing
+									</span>
+									<div className="flex gap-2">
+										<button
+											type="button"
+											aria-pressed={!hideOnScreenShare}
+											onClick={() => onHideOnScreenShareChange(false)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												!hideOnScreenShare
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
+										>
+											Visible
+										</button>
+										<button
+											type="button"
+											aria-pressed={hideOnScreenShare}
+											onClick={() => onHideOnScreenShareChange(true)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												hideOnScreenShare
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
+										>
+											Hidden
+										</button>
+									</div>
+									<p className="text-[12px] text-white/35">
+										Hidden keeps the notepad out of screen shares and
+										recordings.
+									</p>
+								</section>
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
 										Accent color
 									</span>
 									<div className="flex items-center gap-3">
@@ -876,13 +989,16 @@ const FloatingNoteEditor = () => {
 			{isLoading ? (
 				<div className="note-content">Loading notes</div>
 			) : activeNote ? (
-				<MDWrapper
-					key={activeNote.id}
-					noteId={activeNote.id}
-					initialMarkdown={activeNote.markdown}
-					onMarkdownChange={handleMarkdownChange}
-					zoom={editorZoom}
-				/>
+				<>
+					<MDWrapper
+						key={activeNote.id}
+						noteId={activeNote.id}
+						initialMarkdown={activeNote.markdown}
+						onMarkdownChange={handleMarkdownChange}
+						zoom={editorZoom}
+					/>
+					<TableOfContents noteId={activeNote.id} />
+				</>
 			) : (
 				<div className="note-content">No note loaded</div>
 			)}

@@ -454,6 +454,39 @@ fn is_importable_extension(path: &Path) -> bool {
         })
 }
 
+/// Turn a note title into a file name safe to write into the share temp directory.
+fn share_file_name(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '\0' => ' ',
+            _ => ch,
+        })
+        .collect();
+    let mut name = cleaned
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_start_matches('.')
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        name = "Untitled".to_string();
+    }
+
+    format!("{name}.{NOTE_EXTENSION}")
+}
+
+/// Receiving apps display the shared file's name, so hand them a temp copy named after the
+/// note's title instead of the opaque `note-<timestamp>` id the notes directory uses.
+fn write_share_copy(title: &str, markdown: &str) -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join("notetaker-share");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(share_file_name(title));
+    fs::write(&path, markdown).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 #[tauri::command]
 pub fn share_note<R: Runtime>(
     app: AppHandle<R>,
@@ -467,6 +500,9 @@ pub fn share_note<R: Runtime>(
         return Err("Note file not found".to_string());
     }
 
+    let markdown = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let share_path = write_share_copy(&title_from_markdown(&markdown), &markdown)?;
+
     #[cfg(target_os = "macos")]
     {
         use std::sync::mpsc;
@@ -474,7 +510,7 @@ pub fn share_note<R: Runtime>(
         let win = app
             .get_webview_window(LABEL)
             .ok_or_else(|| "Floating note window not found".to_string())?;
-        let path_string = path.to_string_lossy().into_owned();
+        let path_string = share_path.to_string_lossy().into_owned();
         let (tx, rx) = mpsc::channel();
 
         app.run_on_main_thread(move || {
@@ -496,7 +532,7 @@ pub fn share_note<R: Runtime>(
         use tauri_plugin_opener::OpenerExt;
 
         app.opener()
-            .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+            .open_path(share_path.to_string_lossy().into_owned(), None::<&str>)
             .map_err(|error| error.to_string())
     }
 }
@@ -727,6 +763,11 @@ pub fn build_notepad_window<R: Runtime>(
     let builder = builder.visible_on_all_workspaces(true).always_on_top(true);
 
     let win = builder.build().map_err(|e| e.to_string())?;
+    if crate::settings::hide_on_screen_share_enabled(app) {
+        if let Err(error) = win.set_content_protected(true) {
+            eprintln!("floating-note content protection: {error}");
+        }
+    }
     #[cfg(target_os = "macos")]
     if let Err(error) = crate::apply_notepad_vibrancy(app, &win) {
         eprintln!("floating-note backdrop: {error}");

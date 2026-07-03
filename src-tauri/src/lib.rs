@@ -598,6 +598,7 @@ pub fn run() {
         settings::set_accent_color,
         settings::set_backdrop_mode,
         settings::set_paste_with_formatting,
+        settings::set_hide_on_screen_share,
         settings::reveal_notes_directory,
         settings::open_settings
     ]);

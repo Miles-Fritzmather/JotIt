@@ -7,6 +7,7 @@ export interface AppSettings {
 	accentColor: string;
 	backdropMode: BackdropMode;
 	pasteWithFormatting: boolean;
+	hideOnScreenShare: boolean;
 	notesDirectory: string;
 }
 
@@ -26,6 +27,10 @@ export function setBackdropMode(backdropMode: BackdropMode) {
 
 export function setPasteWithFormatting(pasteWithFormatting: boolean) {
 	return invoke<void>("set_paste_with_formatting", { pasteWithFormatting });
+}
+
+export function setHideOnScreenShare(hideOnScreenShare: boolean) {
+	return invoke<void>("set_hide_on_screen_share", { hideOnScreenShare });
 }
 
 export function revealNotesDirectory() {

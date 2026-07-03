@@ -40,6 +40,8 @@ struct StoredSettings {
     backdrop_mode: BackdropMode,
     #[serde(default = "default_paste_with_formatting")]
     paste_with_formatting: bool,
+    #[serde(default)]
+    hide_on_screen_share: bool,
 }
 
 impl Default for StoredSettings {
@@ -48,6 +50,7 @@ impl Default for StoredSettings {
             accent_color: DEFAULT_ACCENT.to_string(),
             backdrop_mode: BackdropMode::default(),
             paste_with_formatting: default_paste_with_formatting(),
+            hide_on_screen_share: false,
         }
     }
 }
@@ -59,6 +62,7 @@ pub struct SettingsView {
     accent_color: String,
     backdrop_mode: BackdropMode,
     paste_with_formatting: bool,
+    hide_on_screen_share: bool,
     notes_directory: String,
 }
 
@@ -109,8 +113,13 @@ pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Result<SettingsView, Strin
         accent_color: stored.accent_color,
         backdrop_mode: stored.backdrop_mode,
         paste_with_formatting: stored.paste_with_formatting,
+        hide_on_screen_share: stored.hide_on_screen_share,
         notes_directory,
     })
+}
+
+pub(crate) fn hide_on_screen_share_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
+    load_settings(app).hide_on_screen_share
 }
 
 #[tauri::command]
@@ -150,6 +159,25 @@ pub fn set_paste_with_formatting<R: Runtime>(
     let mut stored = load_settings(&app);
     stored.paste_with_formatting = paste_with_formatting;
     save_settings(&app, &stored)
+}
+
+#[tauri::command]
+pub fn set_hide_on_screen_share<R: Runtime>(
+    app: AppHandle<R>,
+    hide_on_screen_share: bool,
+) -> Result<(), String> {
+    let mut stored = load_settings(&app);
+    stored.hide_on_screen_share = hide_on_screen_share;
+    save_settings(&app, &stored)?;
+
+    // Content protection excludes the window from screen capture/recording (window sharing type
+    // "none" on macOS), which is exactly "hide on screen share".
+    if let Some(win) = app.get_webview_window(crate::notepad::LABEL) {
+        win.set_content_protected(hide_on_screen_share)
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

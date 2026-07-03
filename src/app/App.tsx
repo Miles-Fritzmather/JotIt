@@ -6,6 +6,7 @@ import {
 	hexToRgbChannels,
 	revealNotesDirectory,
 	setAccentColor,
+	setHideOnScreenShare,
 	setPasteWithFormatting,
 } from "../theme";
 import { pickAndImportMarkdownFiles } from "../notepad/notes";
@@ -20,6 +21,7 @@ function App() {
 	const [accent, setAccent] = useState("#ff6363");
 	const [, setBackdropModeState] = useState<BackdropMode>("glass");
 	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
+	const [hideOnScreenShare, setHideOnScreenShareState] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const saveTimerRef = useRef<number | null>(null);
 
@@ -34,6 +36,7 @@ function App() {
 				setAccent(settings.accentColor);
 				setBackdropModeState(settings.backdropMode);
 				setPasteWithFormattingState(settings.pasteWithFormatting);
+				setHideOnScreenShareState(settings.hideOnScreenShare);
 			})
 			.catch((loadError) => {
 				if (active) {
@@ -84,6 +87,17 @@ function App() {
 			.catch((saveError) =>
 				setError(
 					`Could not save paste setting: ${messageFromError(saveError)}`,
+				),
+			);
+	}, []);
+
+	const onHideOnScreenShareChange = useCallback((enabled: boolean) => {
+		setHideOnScreenShareState(enabled);
+		void setHideOnScreenShare(enabled)
+			.then(() => setError(null))
+			.catch((saveError) =>
+				setError(
+					`Could not save screen share setting: ${messageFromError(saveError)}`,
 				),
 			);
 	}, []);
@@ -180,6 +194,41 @@ function App() {
 				</div>
 				<p className="text-[12px] text-white/35">
 					⌘⇧V pastes using the other mode
+				</p>
+			</section>
+
+			<section className="flex flex-col gap-2">
+				<span className="text-[13px] font-medium text-white/80">
+					Screen sharing
+				</span>
+				<div className="flex gap-2">
+					<button
+						type="button"
+						aria-pressed={!hideOnScreenShare}
+						onClick={() => onHideOnScreenShareChange(false)}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							!hideOnScreenShare
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						Visible
+					</button>
+					<button
+						type="button"
+						aria-pressed={hideOnScreenShare}
+						onClick={() => onHideOnScreenShareChange(true)}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							hideOnScreenShare
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						Hidden
+					</button>
+				</div>
+				<p className="text-[12px] text-white/35">
+					Hidden keeps the notepad out of screen shares and recordings.
 				</p>
 			</section>
 

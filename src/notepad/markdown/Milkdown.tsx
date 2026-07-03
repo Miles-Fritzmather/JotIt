@@ -35,6 +35,7 @@ import {
 	unregisterEditorView,
 } from "./editorBridge";
 import { createEditorSearchPlugin } from "./editorSearch";
+import { createHeadingFoldPlugin } from "./headingFold";
 import { monofontSchema } from "./monofont";
 import { createPasteFormattingPlugins } from "./pasteFormatting";
 
@@ -273,6 +274,36 @@ function focusAtDocumentEnd(ctx: Ctx) {
 	view.focus();
 }
 
+// Crepe's code/LaTeX block copy button gives no feedback on click; briefly swap its label to
+// "Copied!" and set data-copied so CSS can flash it accent-colored.
+function flashCopyFeedback(event: MouseEvent) {
+	const target = event.target;
+	if (!(target instanceof Element)) {
+		return;
+	}
+
+	const button = target.closest<HTMLElement>(".copy-button");
+	if (!button || button.dataset.copied) {
+		return;
+	}
+
+	button.dataset.copied = "true";
+	const label = Array.from(button.childNodes).find(
+		(node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+	);
+	const originalText = label?.textContent ?? null;
+	if (label) {
+		label.textContent = "Copied!";
+	}
+
+	window.setTimeout(() => {
+		delete button.dataset.copied;
+		if (label && originalText !== null) {
+			label.textContent = originalText;
+		}
+	}, 1200);
+}
+
 function disableAppleTextServices(root: HTMLElement) {
 	const editor = root.querySelector<HTMLElement>(".ProseMirror");
 	if (!editor) {
@@ -350,6 +381,7 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 					...createPasteFormattingPlugins(ctx),
 					listShortcutsPlugin(ctx),
 					createEditorSearchPlugin(publishEditorSearchState),
+					createHeadingFoldPlugin(),
 					...plugins,
 				]);
 
@@ -375,6 +407,7 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 				}));
 			});
 
+			root.addEventListener("click", flashCopyFeedback);
 			window.requestAnimationFrame(() => disableAppleTextServices(root));
 			return crepe;
 		},
