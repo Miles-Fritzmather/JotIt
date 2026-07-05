@@ -8,6 +8,9 @@ export interface AppSettings {
 	backdropMode: BackdropMode;
 	pasteWithFormatting: boolean;
 	hideOnScreenShare: boolean;
+	strikeCompletedTasks: boolean;
+	/** Shortcut overrides by action id; actions without an entry use the built-in defaults. */
+	shortcuts: Record<string, string>;
 	notesDirectory: string;
 }
 
@@ -31,6 +34,15 @@ export function setPasteWithFormatting(pasteWithFormatting: boolean) {
 
 export function setHideOnScreenShare(hideOnScreenShare: boolean) {
 	return invoke<void>("set_hide_on_screen_share", { hideOnScreenShare });
+}
+
+export function setStrikeCompletedTasks(strikeCompletedTasks: boolean) {
+	return invoke<void>("set_strike_completed_tasks", { strikeCompletedTasks });
+}
+
+/** Persist a shortcut override; pass null to clear it back to the default. */
+export function setShortcut(action: string, shortcut: string | null) {
+	return invoke<void>("set_shortcut", { action, shortcut });
 }
 
 export function revealNotesDirectory() {

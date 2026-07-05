@@ -581,6 +581,7 @@ pub fn run() {
             .set_activation_policy(tauri::ActivationPolicy::Accessory)?;
 
         notepad::prefetch_hidden(app.handle()).map_err(|e| e.to_string())?;
+        notepad::apply_global_shortcut(app.handle()).map_err(|e| e.to_string())?;
         Ok(())
     });
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -599,6 +600,8 @@ pub fn run() {
         settings::set_backdrop_mode,
         settings::set_paste_with_formatting,
         settings::set_hide_on_screen_share,
+        settings::set_strike_completed_tasks,
+        settings::set_shortcut,
         settings::reveal_notes_directory,
         settings::open_settings
     ]);

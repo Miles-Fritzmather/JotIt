@@ -19,6 +19,7 @@ import {
 	setAccentColor,
 	setHideOnScreenShare,
 	setPasteWithFormatting,
+	setStrikeCompletedTasks,
 } from "../theme";
 import { IconButton } from "./Button";
 import {
@@ -29,6 +30,8 @@ import {
 } from "./lib/editorZoom";
 import { DragRegion, HStack, Substack } from "./lib/helperdivs";
 import { setPasteWithFormatting as setPasteFormattingBridge } from "./lib/pasteSettings";
+import { setShortcutOverrides, shortcutMatches } from "./lib/shortcuts";
+import { ShortcutSettings } from "./ShortcutSettings";
 import { cn, messageFromError } from "./lib/utils";
 import {
 	clearEditorSearchBridge,
@@ -60,6 +63,7 @@ const FloatingNoteEditor = () => {
 	const [, setBackdropModeState] = useState<BackdropMode>("glass");
 	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
 	const [hideOnScreenShare, setHideOnScreenShareState] = useState(false);
+	const [strikeCompletedTasks, setStrikeCompletedTasksState] = useState(true);
 	const [settingsError, setSettingsError] = useState<string | null>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const findInputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +80,13 @@ const FloatingNoteEditor = () => {
 	const showNoteIndicatorTimeoutRef = useRef<ReturnType<
 		typeof setTimeout
 	> | null>(null);
+	// While the settings panel records a new shortcut, all app-level key handling must pause so
+	// the combo being recorded doesn't also trigger its current action.
+	const isRecordingShortcutRef = useRef(false);
+
+	const handleShortcutRecordingChange = useCallback((recording: boolean) => {
+		isRecordingShortcutRef.current = recording;
+	}, []);
 
 	const {
 		notes,
@@ -161,6 +172,17 @@ const FloatingNoteEditor = () => {
 			);
 	}, []);
 
+	const onStrikeCompletedTasksChange = useCallback((enabled: boolean) => {
+		setStrikeCompletedTasksState(enabled);
+		void setStrikeCompletedTasks(enabled)
+			.then(() => setSettingsError(null))
+			.catch((saveError) =>
+				setSettingsError(
+					`Could not save completed tasks setting: ${messageFromError(saveError)}`,
+				),
+			);
+	}, []);
+
 	const openInNoteSettings = useCallback(() => {
 		setIsSearchOpen(false);
 		setDeleteTarget(null);
@@ -174,6 +196,8 @@ const FloatingNoteEditor = () => {
 				setPasteWithFormattingState(settings.pasteWithFormatting);
 				setPasteFormattingBridge(settings.pasteWithFormatting);
 				setHideOnScreenShareState(settings.hideOnScreenShare);
+				setStrikeCompletedTasksState(settings.strikeCompletedTasks);
+				setShortcutOverrides(settings.shortcuts);
 			})
 			.catch((loadError) =>
 				setSettingsError(
@@ -184,6 +208,11 @@ const FloatingNoteEditor = () => {
 
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
+			// The shortcut recorder owns the keyboard while capturing a new combo.
+			if (isRecordingShortcutRef.current) {
+				return;
+			}
+
 			const isMod = event.metaKey || event.ctrlKey;
 
 			if (isMod && !event.altKey) {
@@ -208,33 +237,49 @@ const FloatingNoteEditor = () => {
 					setEditorZoom(EDITOR_ZOOM_DEFAULT);
 					return;
 				}
-
-				if (!event.shiftKey && event.key.toLowerCase() === "f") {
-					event.preventDefault();
-					event.stopPropagation();
-					setIsSearchOpen(false);
-					setIsFindOpen(true);
-					return;
-				}
 			}
 
-			if (!isMod || event.shiftKey) {
+			if (shortcutMatches("findInNote", event)) {
+				event.preventDefault();
+				event.stopPropagation();
+				setIsSearchOpen(false);
+				setIsFindOpen(true);
 				return;
 			}
 
-			// Ctrl+X (specifically Ctrl, not Cmd — leave Cmd+X as cut) opens the delete confirmation.
-			if (
-				event.ctrlKey &&
-				!event.metaKey &&
-				!event.altKey &&
-				event.key.toLowerCase() === "x"
-			) {
+			if (shortcutMatches("deleteNote", event)) {
 				event.preventDefault();
 				event.stopPropagation();
 				if (activeNote) {
 					setIsSearchOpen(false);
 					setDeleteTarget({ id: activeNote.id, title: activeNote.title });
 				}
+				return;
+			}
+
+			if (shortcutMatches("openSettings", event)) {
+				event.preventDefault();
+				event.stopPropagation();
+				openInNoteSettings();
+				return;
+			}
+
+			if (shortcutMatches("newNote", event)) {
+				event.preventDefault();
+				event.stopPropagation();
+				void createNewNote();
+				setIsSearchOpen(false);
+				setSearchQuery("");
+				showNoteIndicator();
+				return;
+			}
+
+			if (shortcutMatches("searchPanel", event)) {
+				event.preventDefault();
+				event.stopPropagation();
+				setSearchQuery("");
+				setHighlightedIndex(0);
+				setIsSearchOpen((prev) => !prev);
 				return;
 			}
 
@@ -250,46 +295,22 @@ const FloatingNoteEditor = () => {
 				return;
 			}
 
-			if (!event.altKey && event.key === ",") {
-				event.preventDefault();
-				event.stopPropagation();
-				openInNoteSettings();
-				return;
-			}
+			if (isMod && !event.shiftKey && event.altKey) {
+				if (event.key === "ArrowLeft") {
+					event.preventDefault();
+					event.stopPropagation();
+					cycleNote(-1);
+					showNoteIndicator();
+					return;
+				}
 
-			if (!event.altKey && event.key.toLowerCase() === "n") {
-				event.preventDefault();
-				event.stopPropagation();
-				void createNewNote();
-				setIsSearchOpen(false);
-				setSearchQuery("");
-				showNoteIndicator();
-				return;
-			}
-
-			if (!event.altKey && event.key.toLowerCase() === "p") {
-				event.preventDefault();
-				event.stopPropagation();
-				setSearchQuery("");
-				setHighlightedIndex(0);
-				setIsSearchOpen((prev) => !prev);
-				return;
-			}
-
-			if (event.altKey && event.key === "ArrowLeft") {
-				event.preventDefault();
-				event.stopPropagation();
-				cycleNote(-1);
-				showNoteIndicator();
-				return;
-			}
-
-			if (event.altKey && event.key === "ArrowRight") {
-				event.preventDefault();
-				event.stopPropagation();
-				cycleNote(1);
-				showNoteIndicator();
-				return;
+				if (event.key === "ArrowRight") {
+					event.preventDefault();
+					event.stopPropagation();
+					cycleNote(1);
+					showNoteIndicator();
+					return;
+				}
 			}
 		};
 
@@ -297,7 +318,7 @@ const FloatingNoteEditor = () => {
 		return () => {
 			window.removeEventListener("keydown", handleKeyDown, { capture: true });
 		};
-	}, [createNewNote, cycleNote, openInNoteSettings]);
+	}, [activeNote, createNewNote, cycleNote, loadPreviouslyVisitedNote, openInNoteSettings]);
 
 	useEffect(() => {
 		if (!isSearchOpen) {
@@ -377,6 +398,10 @@ const FloatingNoteEditor = () => {
 		}
 
 		const handleSettingsKeys = (event: KeyboardEvent) => {
+			// While recording a shortcut, Escape belongs to the recorder (cancel), not the modal.
+			if (isRecordingShortcutRef.current) {
+				return;
+			}
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
@@ -401,6 +426,8 @@ const FloatingNoteEditor = () => {
 				}
 				setPasteWithFormattingState(settings.pasteWithFormatting);
 				setPasteFormattingBridge(settings.pasteWithFormatting);
+				setStrikeCompletedTasksState(settings.strikeCompletedTasks);
+				setShortcutOverrides(settings.shortcuts);
 			})
 			.catch(() => {
 				// Fall back to defaults already in state/bridge.
@@ -565,6 +592,7 @@ const FloatingNoteEditor = () => {
 	return (
 		<div
 			id="floating-note-editor"
+			data-strike-completed={strikeCompletedTasks ? "true" : "false"}
 			className={cn(
 				"border-4 border-accent/20 transition-colors duration-300",
 				isFocused ? "border-accent/60" : "border-accent/5",
@@ -958,6 +986,46 @@ const FloatingNoteEditor = () => {
 										recordings.
 									</p>
 								</section>
+								<section className="flex flex-col gap-2">
+									<span className="text-[13px] font-medium text-white/80">
+										Completed tasks
+									</span>
+									<div className="flex gap-2">
+										<button
+											type="button"
+											aria-pressed={strikeCompletedTasks}
+											onClick={() => onStrikeCompletedTasksChange(true)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												strikeCompletedTasks
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
+										>
+											<span className="text-white/50 line-through">
+												Strike through
+											</span>
+										</button>
+										<button
+											type="button"
+											aria-pressed={!strikeCompletedTasks}
+											onClick={() => onStrikeCompletedTasksChange(false)}
+											className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+												!strikeCompletedTasks
+													? "border-accent/50 bg-accent/16 text-white"
+													: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+											}`}
+										>
+											Plain
+										</button>
+									</div>
+									<p className="text-[12px] text-white/35">
+										Strike through grays out checked to-do items.
+									</p>
+								</section>
+								<ShortcutSettings
+									onError={setSettingsError}
+									onRecordingChange={handleShortcutRecordingChange}
+								/>
 								<section className="flex flex-col gap-2">
 									<span className="text-[13px] font-medium text-white/80">
 										Accent color

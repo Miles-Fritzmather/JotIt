@@ -8,14 +8,12 @@ import {
 	prosePluginsCtx,
 } from "@milkdown/kit/core";
 import type { Ctx } from "@milkdown/kit/ctx";
-import { toggleLinkCommand } from "@milkdown/kit/component/link-tooltip";
 import {
-	bulletListSchema,
 	clearTextInCurrentBlockCommand,
+	isMarkSelectedCommand,
 	listItemSchema,
 	paragraphSchema,
 	setBlockTypeCommand,
-	wrapInBlockTypeCommand,
 } from "@milkdown/kit/preset/commonmark";
 import { keymap } from "@milkdown/kit/prose/keymap";
 import type { Node as ProseNode } from "@milkdown/kit/prose/model";
@@ -35,9 +33,15 @@ import {
 	unregisterEditorView,
 } from "./editorBridge";
 import { createEditorSearchPlugin } from "./editorSearch";
+import { createFormattingShortcutsPlugin } from "./formattingShortcuts";
 import { createHeadingFoldPlugin } from "./headingFold";
 import { monofontSchema } from "./monofont";
 import { createPasteFormattingPlugins } from "./pasteFormatting";
+import {
+	remarkUnderlinePlugin,
+	toggleUnderlineCommand,
+	underlineSchema,
+} from "./underline";
 
 const monofontIcon = `
   <svg
@@ -56,6 +60,14 @@ const monofontIcon = `
         <rect width="24" height="24" />
       </clipPath>
     </defs>
+  </svg>
+`;
+
+const underlineIcon = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 4v6a6 6 0 0 0 12 0V4" />
+    <line x1="4" x2="20" y1="20" y2="20" />
   </svg>
 `;
 
@@ -195,15 +207,11 @@ function insertLineRelative(ctx: Ctx, direction: "above" | "below"): Command {
 	};
 }
 
-// Editor keyboard shortcuts:
-//   Cmd/Ctrl + K               -> link
-//   Cmd/Ctrl + Shift + 8       -> bullet list
-//   Cmd/Ctrl + Shift + 9       -> todo (task) list
+// Fixed editor keyboard shortcuts (the configurable ones live in formattingShortcuts.ts):
 //   Cmd/Ctrl + Alt + Up/Down   -> move the current list item up/down
 //   Cmd/Ctrl + Enter           -> toggle checklist item, or insert line below
 //   Cmd/Ctrl + Shift + Enter   -> insert line above
 //   Cmd/Ctrl + Alt + Enter     -> toggle the current todo item
-// List creation mirrors Crepe's own block menu so it toggles cleanly.
 function openExternalLink(href: string) {
 	void openUrl(href).catch(() => {
 		window.open(href, "_blank", "noopener,noreferrer");
@@ -243,20 +251,7 @@ function handleLinkClick(view: EditorView, event: MouseEvent) {
 }
 
 function listShortcutsPlugin(ctx: Ctx) {
-	const wrapInList = (
-		nodeType: ReturnType<typeof bulletListSchema.type>,
-		attrs?: Record<string, unknown>,
-	) => {
-		const commands = ctx.get(commandsCtx);
-		commands.call(clearTextInCurrentBlockCommand.key);
-		return commands.call(wrapInBlockTypeCommand.key, { nodeType, attrs });
-	};
-
 	return keymap({
-		"Mod-k": () => ctx.get(commandsCtx).call(toggleLinkCommand.key),
-		"Mod-Shift-8": () => wrapInList(bulletListSchema.type(ctx)),
-		"Mod-Shift-9": () =>
-			wrapInList(listItemSchema.type(ctx), { checked: false }),
 		"Mod-Alt-ArrowUp": moveListItem(-1),
 		"Mod-Alt-ArrowDown": moveListItem(1),
 		"Mod-Enter": modEnter(ctx),
@@ -336,6 +331,22 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 					[Crepe.Feature.Cursor]: {
 						virtual: false,
 					},
+					[Crepe.Feature.Toolbar]: {
+						buildToolbar: (builder) => {
+							builder.getGroup("formatting").addItem("underline", {
+								icon: underlineIcon,
+								active: (itemCtx) =>
+									itemCtx
+										.get(commandsCtx)
+										.call(
+											isMarkSelectedCommand.key,
+											underlineSchema.type(itemCtx),
+										),
+								onRun: (itemCtx) =>
+									itemCtx.get(commandsCtx).call(toggleUnderlineCommand.key),
+							});
+						},
+					},
 					[Crepe.Feature.BlockEdit]: {
 						blockHandle: { shouldShow: () => false },
 						// Hide individual slash items by setting them to null:
@@ -361,7 +372,11 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 				},
 			});
 
-			crepe.editor.use(monofontSchema);
+			crepe.editor
+				.use(monofontSchema)
+				.use(remarkUnderlinePlugin)
+				.use(underlineSchema)
+				.use(toggleUnderlineCommand);
 
 			crepe.on((listener) => {
 				listener.markdownUpdated((_ctx, markdown) => {
@@ -379,6 +394,7 @@ export const MilkdownEditor: FC<MilkdownEditorProps> = ({
 				// (e.g. Mod-Enter outside a todo), letting Crepe's defaults run.
 				ctx.update(prosePluginsCtx, (plugins) => [
 					...createPasteFormattingPlugins(ctx),
+					createFormattingShortcutsPlugin(ctx),
 					listShortcutsPlugin(ctx),
 					createEditorSearchPlugin(publishEditorSearchState),
 					createHeadingFoldPlugin(),

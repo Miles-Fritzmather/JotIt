@@ -585,10 +585,14 @@ pub fn delete_note<R: Runtime>(app: AppHandle<R>, id: String) -> Result<(), Stri
     Ok(())
 }
 
+/// Settings key for the global open/close shortcut; shared with the frontend registry.
+pub const TOGGLE_SHORTCUT_ACTION: &str = "toggleNotepad";
+const DEFAULT_TOGGLE_SHORTCUT: &str = "Ctrl+Shift+J";
+
+/// The plugin only installs the handler; the actual binding is registered (and re-registered on
+/// change) by [`apply_global_shortcut`] from the persisted settings.
 pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     GlobalShortcutBuilder::new()
-        .with_shortcut("Ctrl+Shift+J")
-        .expect("floating-note global shortcut should parse")
         .with_handler(|app, _shortcut, event| {
             if event.state != ShortcutState::Pressed {
                 return;
@@ -601,6 +605,34 @@ pub fn shortcut_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             });
         })
         .build()
+}
+
+/// (Re)bind the global toggle shortcut to the configured value, falling back to the default if
+/// the configured one fails to register (e.g. it was grabbed by another app since being saved).
+pub(crate) fn apply_global_shortcut<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let binding = crate::settings::shortcut_override(app, TOGGLE_SHORTCUT_ACTION)
+        .unwrap_or_else(|| DEFAULT_TOGGLE_SHORTCUT.to_string());
+
+    let shortcuts = app.global_shortcut();
+    shortcuts.unregister_all().map_err(|e| e.to_string())?;
+
+    if let Err(error) = shortcuts.register(binding.as_str()) {
+        let fallback = shortcuts
+            .register(DEFAULT_TOGGLE_SHORTCUT)
+            .map_err(|e| e.to_string());
+        return match fallback {
+            Ok(()) => Err(format!(
+                "Could not register \"{binding}\" ({error}); kept {DEFAULT_TOGGLE_SHORTCUT}"
+            )),
+            Err(fallback_error) => Err(format!(
+                "Could not register \"{binding}\" ({error}) or the default ({fallback_error})"
+            )),
+        };
+    }
+
+    Ok(())
 }
 
 fn toggle_notepad<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {

@@ -8,8 +8,11 @@ import {
 	setAccentColor,
 	setHideOnScreenShare,
 	setPasteWithFormatting,
+	setStrikeCompletedTasks,
 } from "../theme";
+import { setShortcutOverrides } from "../notepad/lib/shortcuts";
 import { pickAndImportMarkdownFiles } from "../notepad/notes";
+import { ShortcutSettings } from "../notepad/ShortcutSettings";
 import "./App.css";
 
 function messageFromError(error: unknown) {
@@ -22,6 +25,7 @@ function App() {
 	const [, setBackdropModeState] = useState<BackdropMode>("glass");
 	const [pasteWithFormatting, setPasteWithFormattingState] = useState(true);
 	const [hideOnScreenShare, setHideOnScreenShareState] = useState(false);
+	const [strikeCompletedTasks, setStrikeCompletedTasksState] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const saveTimerRef = useRef<number | null>(null);
 
@@ -37,6 +41,8 @@ function App() {
 				setBackdropModeState(settings.backdropMode);
 				setPasteWithFormattingState(settings.pasteWithFormatting);
 				setHideOnScreenShareState(settings.hideOnScreenShare);
+				setStrikeCompletedTasksState(settings.strikeCompletedTasks);
+				setShortcutOverrides(settings.shortcuts);
 			})
 			.catch((loadError) => {
 				if (active) {
@@ -98,6 +104,17 @@ function App() {
 			.catch((saveError) =>
 				setError(
 					`Could not save screen share setting: ${messageFromError(saveError)}`,
+				),
+			);
+	}, []);
+
+	const onStrikeCompletedTasksChange = useCallback((enabled: boolean) => {
+		setStrikeCompletedTasksState(enabled);
+		void setStrikeCompletedTasks(enabled)
+			.then(() => setError(null))
+			.catch((saveError) =>
+				setError(
+					`Could not save completed tasks setting: ${messageFromError(saveError)}`,
 				),
 			);
 	}, []);
@@ -231,6 +248,43 @@ function App() {
 					Hidden keeps the notepad out of screen shares and recordings.
 				</p>
 			</section>
+
+			<section className="flex flex-col gap-2">
+				<span className="text-[13px] font-medium text-white/80">
+					Completed tasks
+				</span>
+				<div className="flex gap-2">
+					<button
+						type="button"
+						aria-pressed={strikeCompletedTasks}
+						onClick={() => onStrikeCompletedTasksChange(true)}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							strikeCompletedTasks
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						<span className="text-white/50 line-through">Strike through</span>
+					</button>
+					<button
+						type="button"
+						aria-pressed={!strikeCompletedTasks}
+						onClick={() => onStrikeCompletedTasksChange(false)}
+						className={`rounded-md border px-3 py-2 text-[12px] transition-colors ${
+							!strikeCompletedTasks
+								? "border-accent/50 bg-accent/16 text-white"
+								: "border-white/15 bg-white/6 text-white/80 hover:bg-white/12 hover:text-white"
+						}`}
+					>
+						Plain
+					</button>
+				</div>
+				<p className="text-[12px] text-white/35">
+					Strike through grays out checked to-do items.
+				</p>
+			</section>
+
+			<ShortcutSettings onError={setError} />
 
 			<section className="flex flex-col gap-2">
 				<span className="text-[13px] font-medium text-white/80">

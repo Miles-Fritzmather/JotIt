@@ -1,7 +1,7 @@
 //! Persistent application settings (accent color) plus the on-demand settings window.
 //! The notepad window never opens or owns this window; it only asks Rust to show it.
 
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -32,6 +32,10 @@ fn default_paste_with_formatting() -> bool {
     true
 }
 
+fn default_strike_completed_tasks() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredSettings {
@@ -42,6 +46,13 @@ struct StoredSettings {
     paste_with_formatting: bool,
     #[serde(default)]
     hide_on_screen_share: bool,
+    /// Gray out and strike through checked to-do items in the editor.
+    #[serde(default = "default_strike_completed_tasks")]
+    strike_completed_tasks: bool,
+    /// Shortcut overrides by action id (e.g. "bold" → "Cmd+Shift+B"). Actions without an entry
+    /// use the frontend's defaults; "toggleNotepad" is also read by the Rust global shortcut.
+    #[serde(default)]
+    shortcuts: HashMap<String, String>,
 }
 
 impl Default for StoredSettings {
@@ -51,6 +62,8 @@ impl Default for StoredSettings {
             backdrop_mode: BackdropMode::default(),
             paste_with_formatting: default_paste_with_formatting(),
             hide_on_screen_share: false,
+            strike_completed_tasks: default_strike_completed_tasks(),
+            shortcuts: HashMap::new(),
         }
     }
 }
@@ -63,6 +76,8 @@ pub struct SettingsView {
     backdrop_mode: BackdropMode,
     paste_with_formatting: bool,
     hide_on_screen_share: bool,
+    strike_completed_tasks: bool,
+    shortcuts: HashMap<String, String>,
     notes_directory: String,
 }
 
@@ -114,12 +129,63 @@ pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Result<SettingsView, Strin
         backdrop_mode: stored.backdrop_mode,
         paste_with_formatting: stored.paste_with_formatting,
         hide_on_screen_share: stored.hide_on_screen_share,
+        strike_completed_tasks: stored.strike_completed_tasks,
+        shortcuts: stored.shortcuts,
         notes_directory,
     })
 }
 
+#[tauri::command]
+pub fn set_strike_completed_tasks<R: Runtime>(
+    app: AppHandle<R>,
+    strike_completed_tasks: bool,
+) -> Result<(), String> {
+    let mut stored = load_settings(&app);
+    stored.strike_completed_tasks = strike_completed_tasks;
+    save_settings(&app, &stored)
+}
+
 pub(crate) fn hide_on_screen_share_enabled<R: Runtime>(app: &AppHandle<R>) -> bool {
     load_settings(app).hide_on_screen_share
+}
+
+pub(crate) fn shortcut_override<R: Runtime>(app: &AppHandle<R>, action: &str) -> Option<String> {
+    load_settings(app).shortcuts.get(action).cloned()
+}
+
+#[tauri::command]
+pub fn set_shortcut<R: Runtime>(
+    app: AppHandle<R>,
+    action: String,
+    shortcut: Option<String>,
+) -> Result<(), String> {
+    let shortcut = shortcut.filter(|value| !value.trim().is_empty());
+
+    // Validate before persisting so a bad binding can't strand the global shortcut unbound.
+    if action == crate::notepad::TOGGLE_SHORTCUT_ACTION {
+        if let Some(value) = &shortcut {
+            value
+                .parse::<tauri_plugin_global_shortcut::Shortcut>()
+                .map_err(|error| format!("Invalid shortcut \"{value}\": {error}"))?;
+        }
+    }
+
+    let mut stored = load_settings(&app);
+    match &shortcut {
+        Some(value) => {
+            stored.shortcuts.insert(action.clone(), value.clone());
+        }
+        None => {
+            stored.shortcuts.remove(&action);
+        }
+    }
+    save_settings(&app, &stored)?;
+
+    if action == crate::notepad::TOGGLE_SHORTCUT_ACTION {
+        crate::notepad::apply_global_shortcut(&app)?;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

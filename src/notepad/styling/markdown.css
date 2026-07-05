@@ -459,7 +459,9 @@ body,
 	color: var(--color-accent);
 }
 
-#floating-note-editor
+/* Gray out + strike through checked to-dos. Gated on the "Completed tasks" setting, which the
+   editor mirrors onto the shell as data-strike-completed (absent while settings load = on). */
+#floating-note-editor:not([data-strike-completed="false"])
 	.milkdown-list-item-block
 	li:has(> .label-wrapper > .label.checked)
 	> .children
@@ -557,9 +559,19 @@ body,
 	background: color-mix(in srgb, var(--color-accent) 16%, transparent) !important;
 }
 
+/* Marks already applied to the selection get a clearly highlighted toolbar button. */
+#floating-note-editor .milkdown-toolbar .toolbar-item.active {
+	background: color-mix(in srgb, var(--color-accent) 22%, transparent) !important;
+}
+
 #floating-note-editor .milkdown-toolbar .toolbar-item.active svg {
 	color: var(--color-accent) !important;
 	fill: var(--color-accent) !important;
+}
+
+#floating-note-editor .ProseMirror u {
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
 }
 /* Crepe's inline LaTeX editor uses the near-transparent surface color; floating over note text
    that is unreadable, so give it an opaque popover treatment like the other panels. */
