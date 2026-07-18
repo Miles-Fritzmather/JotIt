@@ -357,6 +357,16 @@ mod macos {
             | NSWindowCollectionBehavior::CanJoinAllApplications
     }
 
+    /// Temporary behavior used while ordering a previously hidden panel. WindowServer can leave
+    /// a `CanJoinAllSpaces` panel attached only to its original desktop after it has been hidden
+    /// for a while. Moving the panel (even by a pixel) repairs that stale Space registration.
+    /// Ordering it once with `MoveToActiveSpace` has the same effect without changing its frame;
+    /// immediately afterwards we restore `CanJoinAllSpaces` so it keeps following Space changes.
+    fn notepad_active_space_behavior() -> NSWindowCollectionBehavior {
+        (notepad_collection_behavior() & !NSWindowCollectionBehavior::CanJoinAllSpaces)
+            | NSWindowCollectionBehavior::MoveToActiveSpace
+    }
+
     pub(super) fn configure_fullscreen_overlay<R: tauri::Runtime>(
         window: &tauri::WebviewWindow<R>,
     ) -> tauri::Result<()> {
@@ -408,15 +418,21 @@ mod macos {
     ) -> tauri::Result<()> {
         configure_fullscreen_overlay(window)?;
 
+        let ptr = window.ns_window()? as *mut NSWindow;
+        let w = unsafe { &*ptr };
+        // `MoveToActiveSpace` and `CanJoinAllSpaces` are mutually exclusive. Apply the former only
+        // for the ordering operation so a stale hidden panel is first adopted by the user's
+        // current Space, then restore the permanent all-Spaces behavior below.
+        w.setCollectionBehavior(notepad_active_space_behavior());
+
         if let Some(mtm) = MainThreadMarker::new() {
             let app = NSApplication::sharedApplication(mtm);
             #[allow(deprecated)]
             app.activateIgnoringOtherApps(true);
         }
 
-        let ptr = window.ns_window()? as *mut NSWindow;
-        let w = unsafe { &*ptr };
         w.makeKeyAndOrderFront(None::<&AnyObject>);
+        w.setCollectionBehavior(notepad_collection_behavior());
         w.orderFrontRegardless();
         Ok(())
     }
